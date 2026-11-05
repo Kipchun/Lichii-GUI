@@ -17,6 +17,8 @@
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QLabel>
+#include <QLineEdit>
+#include <QSignalBlocker>
 #include <QString>
 #include <QToolButton>
 #include <QVariant>
@@ -115,6 +117,24 @@ ConfigureUi::ConfigureUi(Core::System& system_, QWidget* parent)
     if (auto* parent_layout = qobject_cast<QBoxLayout*>(ui->horizontalLayout_3->parent())) {
         parent_layout->insertLayout(parent_layout->indexOf(ui->horizontalLayout_3), appearance_row);
     }
+    // Placed after the theme row.
+    download_covers_checkbox = new QCheckBox(
+        tr("Download missing cover art (sends game names and title IDs to switchiconshowdown.com "
+           "and SteamGridDB)"),
+        this);
+    auto* key_row = new QHBoxLayout;
+    key_row->addWidget(new QLabel(tr("SteamGridDB API key:"), this));
+    steamgriddb_key_edit = new QLineEdit(this);
+    steamgriddb_key_edit->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+    steamgriddb_key_edit->setPlaceholderText(tr("Optional; finds more games"));
+    key_row->addWidget(steamgriddb_key_edit);
+    if (auto* parent_layout = qobject_cast<QBoxLayout*>(ui->horizontalLayout_3->parent())) {
+        const int theme_row = parent_layout->indexOf(ui->horizontalLayout_3);
+        parent_layout->insertWidget(theme_row + 1, download_covers_checkbox);
+        parent_layout->insertLayout(theme_row + 2, key_row);
+    }
+    connect(download_covers_checkbox, &QCheckBox::toggled, this,
+            &ConfigureUi::RequestGameListUpdate);
     connect(appearance_combobox, &QComboBox::currentIndexChanged, this, [this] {
         const bool classic = appearance_combobox->currentData().toString() == QStringLiteral("classic");
         ui->theme_label->setEnabled(classic);
@@ -171,6 +191,8 @@ ConfigureUi::~ConfigureUi() = default;
 
 void ConfigureUi::ApplyConfiguration() {
     UISettings::values.home_theme = appearance_combobox->currentData().toString().toStdString();
+    UISettings::values.download_covers = download_covers_checkbox->isChecked();
+    UISettings::values.steamgriddb_api_key = steamgriddb_key_edit->text().trimmed().toStdString();
     UISettings::values.theme =
         ui->theme_combobox->itemData(ui->theme_combobox->currentIndex()).toString().toStdString();
     UISettings::values.show_add_ons = ui->show_add_ons->isChecked();
@@ -202,6 +224,13 @@ void ConfigureUi::SetConfiguration() {
     const bool classic = appearance_combobox->currentData().toString() == QStringLiteral("classic");
     ui->theme_label->setEnabled(classic);
     ui->theme_combobox->setEnabled(classic);
+    {
+        // Loading the saved value must not count as a change that needs a rescan.
+        const QSignalBlocker blocker(download_covers_checkbox);
+        download_covers_checkbox->setChecked(UISettings::values.download_covers.GetValue());
+    }
+    steamgriddb_key_edit->setText(
+        QString::fromStdString(UISettings::values.steamgriddb_api_key.GetValue()));
     ui->theme_combobox->setCurrentIndex(
         ui->theme_combobox->findData(QString::fromStdString(UISettings::values.theme)));
     ui->language_combobox->setCurrentIndex(ui->language_combobox->findData(

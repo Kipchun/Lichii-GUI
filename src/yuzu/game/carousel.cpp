@@ -61,7 +61,9 @@ public:
                               Qt::AlignCenter | Qt::TextWordWrap,
                               index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0));
         } else {
-            painter->drawPixmap(tile, art);
+            const int side = std::min(art.width(), art.height());
+            painter->drawPixmap(tile, art,
+                                QRect((art.width() - side) / 2, (art.height() - side) / 2, side, side));
         }
 
         // As on the Switch, only the focused row shows its selection.

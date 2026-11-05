@@ -4,10 +4,16 @@
 // SPDX-FileCopyrightText: 2015 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <functional>
+
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QDir>
+#include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
+#include <QFutureWatcher>
+#include <QImage>
 #include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -20,9 +26,14 @@
 #include <QScrollerProperties>
 #include <QToolButton>
 #include <QVariantAnimation>
+#include <QtConcurrent/QtConcurrentRun>
 #include <qlayoutitem.h>
 
+#include <fmt/format.h>
+
 #include "common/common_types.h"
+#include "common/fs/path_util.h"
+#include "common/logging.h"
 #include "core/core.h"
 #include "core/file_sys/nup_writer.h"
 #include "core/file_sys/patch_manager.h"
@@ -39,6 +50,44 @@
 #include "yuzu/game/search_field.h"
 #include "yuzu/main_window.h"
 #include "yuzu/util/controller_navigation.h"
+#include "yuzu/util/icon_search.h"
+
+namespace {
+// Square covers, cached per title. A ".none" marker remembers a lookup that found nothing, so the
+// next scan does not ask again; choosing or searching for a cover by hand clears it.
+QString CoverPath(u64 program_id, const char* extension) {
+    const auto dir = Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir) / "covers";
+    return QString::fromStdString(
+        Common::FS::PathToUTF8String(dir / fmt::format("{:016X}.{}", program_id, extension)));
+}
+
+void ForEachGame(QStandardItem* parent, const std::function<void(QStandardItem*)>& visit) {
+    for (int row = 0; row < parent->rowCount(); ++row) {
+        QStandardItem* child = parent->child(row, 0);
+        if (!child) {
+            continue;
+        }
+        if (child->data(GameListItem::TypeRole).value<GameListItemType>() ==
+            GameListItemType::Game) {
+            visit(child);
+        } else if (child->hasChildren()) {
+            ForEachGame(child, visit);
+        }
+    }
+}
+
+// Loose dumps are often named after a folder such as "917504"; searching for that finds nonsense,
+// so such names are left out and the title ID alone is used.
+QString SearchableName(const QString& name) {
+    const QString trimmed = name.trimmed();
+    for (const QChar c : trimmed) {
+        if (c.isLetter()) {
+            return trimmed;
+        }
+    }
+    return {};
+}
+} // namespace
 
 GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvider* provider_,
                    PlayTime::PlayTimeManager& play_time_manager_, Core::System& system_,
@@ -137,6 +186,7 @@ void GameList::SetNupConversionRunning(bool running) {
 }
 
 GameList::~GameList() {
+    cover_cancel->store(true);
     UnloadController();
 }
 
@@ -294,6 +344,146 @@ void GameList::ResetViewMode() {
     }
 }
 
+void GameList::ApplyCovers() {
+    std::vector<CoverRequest> missing;
+    ForEachGame(item_model->invisibleRootItem(), [&](QStandardItem* item) {
+        const u64 id = item->data(GameListItemPath::ProgramIdRole).toULongLong();
+        if (id == 0) {
+            return;
+        }
+        auto cached = cover_cache.find(id);
+        if (cached == cover_cache.end()) {
+            const QPixmap cover(CoverPath(id, "png"));
+            cached = cover_cache.insert(id, cover);
+        }
+        if (!cached->isNull()) {
+            ShowCover(id, *cached);
+        } else if (!item->data(GameListItemPath::ArtworkRole).isValid()) {
+            missing.push_back({id, item->data(GameListItemPath::TitleRole).toString()});
+        }
+    });
+
+    if (!UISettings::values.download_covers.GetValue()) {
+        return;
+    }
+    for (const CoverRequest& request : missing) {
+        if (!cover_queued.contains(request.program_id) &&
+            !QFile::exists(CoverPath(request.program_id, "none"))) {
+            cover_queued.insert(request.program_id);
+            cover_queue.push_back(request);
+        }
+    }
+    FetchNextCover();
+}
+
+void GameList::FetchNextCover() {
+    if (!cover_watcher) {
+        cover_watcher = new QFutureWatcher<IconSearchResult>(this);
+        connect(cover_watcher, &QFutureWatcherBase::finished, this, &GameList::OnCoverFound);
+    }
+    if (cover_watcher->isRunning() || cover_queue.empty()) {
+        return;
+    }
+    const CoverRequest request = cover_queue.front();
+    cover_queue.pop_front();
+    cover_pending_id = request.program_id;
+    // Captures nothing from the game list, so a search may safely outlive it.
+    cover_watcher->setFuture(QtConcurrent::run(
+        [name = SearchableName(request.name).toStdString(), id = request.program_id,
+         key = UISettings::values.steamgriddb_api_key.GetValue(), cancel = cover_cancel] {
+            return SearchIconQuietly(name, id, key, *cancel);
+        }));
+}
+
+void GameList::OnCoverFound() {
+    const u64 id = cover_pending_id;
+    cover_queued.remove(id);
+    const IconSearchResult result = cover_watcher->result();
+
+    const std::vector<u8>* bytes = nullptr;
+    if (result.status == IconSearchStatus::Found && !result.icon_bytes.empty()) {
+        bytes = &result.icon_bytes;
+    } else if (!result.choices.empty()) {
+        // Unattended, so take the closest match; Cover Art > Find Online lets the user choose.
+        bytes = &result.choices.front();
+    }
+    QImage image;
+    if (bytes) {
+        image.loadFromData(bytes->data(), static_cast<int>(bytes->size()));
+    }
+
+    if (!image.isNull()) {
+        LOG_INFO(Frontend, "Downloaded cover art for {:016X}", id);
+        SaveCover(id, image);
+    } else {
+        switch (result.status) {
+        case IconSearchStatus::Timeout:
+        case IconSearchStatus::NetworkError:
+        case IconSearchStatus::BadApiKey:
+        case IconSearchStatus::InternalError:
+            // Probably offline or misconfigured; try again on the next scan.
+            LOG_WARNING(Frontend, "Cover art lookup stopped at {:016X}: {}", id, result.error);
+            for (const CoverRequest& request : cover_queue) {
+                cover_queued.remove(request.program_id);
+            }
+            cover_queue.clear();
+            return;
+        case IconSearchStatus::Cancelled:
+            return;
+        default:
+            LOG_INFO(Frontend, "No cover art found for {:016X}", id);
+            QDir().mkpath(QFileInfo(CoverPath(id, "none")).absolutePath());
+            QFile marker(CoverPath(id, "none"));
+            marker.open(QFile::WriteOnly);
+            break;
+        }
+    }
+    FetchNextCover();
+}
+
+void GameList::SaveCover(u64 program_id, const QImage& image) {
+    // Covers are stored square, so every view can show them without stretching.
+    const int side = std::min(image.width(), image.height());
+    QImage square = image.copy((image.width() - side) / 2, (image.height() - side) / 2, side, side);
+    if (side > 512) {
+        square = square.scaled(512, 512, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    const QString path = CoverPath(program_id, "png");
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    square.save(path, "PNG");
+    QFile::remove(CoverPath(program_id, "none"));
+    const QPixmap cover = QPixmap::fromImage(square);
+    cover_cache.insert(program_id, cover);
+    ShowCover(program_id, cover);
+}
+
+void GameList::ShowCover(u64 program_id, const QPixmap& cover) {
+    const u32 icon_size = UISettings::values.game_icon_size.GetValue();
+    const QPixmap icon =
+        icon_size == 0 ? QPixmap{}
+                       : cover.scaled(icon_size, icon_size, Qt::IgnoreAspectRatio,
+                                      Qt::SmoothTransformation);
+    ForEachGame(item_model->invisibleRootItem(), [&](QStandardItem* item) {
+        if (item->data(GameListItemPath::ProgramIdRole).toULongLong() == program_id) {
+            item->setData(cover, GameListItemPath::ArtworkRole);
+            if (!icon.isNull()) {
+                item->setData(icon, Qt::DecorationRole);
+            }
+        }
+    });
+}
+
+QString GameList::TitleOf(u64 program_id) const {
+    QString found;
+    ForEachGame(item_model->invisibleRootItem(), [&](QStandardItem* item) {
+        if (found.isEmpty() &&
+            item->data(GameListItemPath::ProgramIdRole).toULongLong() == program_id) {
+            found = item->data(GameListItemPath::TitleRole).toString();
+        }
+    });
+    return found;
+}
+
 void GameList::ApplySortOrder() {
     if (game_list_mode == Settings::GameListMode::CarouselView) {
         item_model->sort(0, Qt::AscendingOrder);
@@ -405,6 +595,7 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
 
     // TODO: carousel/grid impl.
     ApplySortOrder();
+    ApplyCovers();
 
     if (game_list_mode == Settings::GameListMode::CarouselView) {
         carousel_view->SelectFirstIfNone();
@@ -552,6 +743,40 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
     QMenu* play_time_menu = context_menu.addMenu(tr("Manage Play Time"));
     QAction* set_play_time = play_time_menu->addAction(tr("Edit Play Time Data"));
     QAction* remove_play_time_data = play_time_menu->addAction(tr("Remove Play Time Data"));
+    QMenu* cover_menu = context_menu.addMenu(tr("Cover Art"));
+    cover_menu->menuAction()->setVisible(program_id != 0);
+    cover_menu->addAction(tr("Choose Image..."), this, [this, program_id] {
+        const QString file = QFileDialog::getOpenFileName(
+            this, tr("Choose Cover Image"), {}, tr("Images (*.png *.jpg *.jpeg *.bmp *.webp)"));
+        if (const QImage image(file); !file.isEmpty() && !image.isNull()) {
+            SaveCover(program_id, image);
+        }
+    });
+    cover_menu->addAction(tr("Find Online..."), this, [this, program_id] {
+        auto* search = new IconSearch(this);
+        connect(search, &IconSearch::IconSelected, this,
+                [this, program_id](const QByteArray& png) {
+                    if (const QImage image = QImage::fromData(png); !image.isNull()) {
+                        SaveCover(program_id, image);
+                    }
+                });
+        connect(search, &IconSearch::RunningChanged, search, [search](bool running) {
+            if (!running) {
+                search->deleteLater();
+            }
+        });
+        search->Start(SearchableName(TitleOf(program_id)), program_id);
+    });
+    QAction* remove_cover = cover_menu->addAction(tr("Remove Cover"), this, [this, program_id] {
+        QFile::remove(CoverPath(program_id, "png"));
+        // Keeps it from being downloaded again on the next scan.
+        QDir().mkpath(QFileInfo(CoverPath(program_id, "none")).absolutePath());
+        QFile marker(CoverPath(program_id, "none"));
+        marker.open(QFile::WriteOnly);
+        cover_cache.remove(program_id);
+        PopulateAsync(UISettings::values.game_dirs);
+    });
+    remove_cover->setEnabled(QFile::exists(CoverPath(program_id, "png")));
     const bool is_nup_archive =
         !FileSys::Nup::DumpRootFromMain(path) &&
         QString::fromStdString(path).endsWith(QStringLiteral(".nup"), Qt::CaseInsensitive);

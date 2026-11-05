@@ -92,6 +92,18 @@ std::string NormalizeGameSlug(std::string title) {
 std::string ResolveGameNameAlias(const std::string& raw_name, u64 title_id) {
     static const std::unordered_map<u64, std::string> by_title_id{
         {0x0400C3F00006E000ULL, "Mario Kart World"},
+        {0x040074A01BF12000ULL, "Donkey Kong Bananza"},
+        {0x040077201BE50000ULL, "Kirby Air Riders"},
+        {0x04007C6028AA8000ULL, "Yoshi and the Mysterious Book"},
+        {0x0400D4201C6EA000ULL, "Mario Tennis Fever"},
+        {0x0400E88025B1A000ULL, "Star Fox"},
+        {0x04007EF01F8AE000ULL, "Fire Emblem: Fortune's Weave"},
+        {0x04008E001F098000ULL, "Nintendo Switch Sports Resort"},
+        {0x0400A3A01EE4C000ULL, "Pokemon Pokopia"},
+        {0x0400A4802437E000ULL, "Drag x Drive"},
+        {0x040041E0212AE000ULL, "Fast Fusion"},
+        {0x040057C02159A000ULL, "Nintendo Switch 2 Welcome Tour"},
+        {0x0400486024DEC000ULL, "The Legend of Zelda: Ocarina of Time"},
         {0x0100000000010000ULL, "Super Mario Odyssey"},
         {0x0100152000022000ULL, "Mario Kart 8 Deluxe"},
         {0x01007EF00011E000ULL, "The Legend of Zelda: Breath of the Wild"},
@@ -539,6 +551,11 @@ IconSearchResult RunIconSearch(const std::string& raw_query, u64 tid, const std:
 }
 
 } // namespace
+
+IconSearchResult SearchIconQuietly(const std::string& name, u64 title_id,
+                                   const std::string& api_key, const std::atomic_bool& cancel) {
+    return RunIconSearch(name, title_id, api_key, cancel);
+}
 
 IconSearch::IconSearch(QWidget* parent) : QObject(parent), parent_widget{parent} {
     connect(&watcher, &QFutureWatcher<IconSearchResult>::finished, this, &IconSearch::OnFinished);

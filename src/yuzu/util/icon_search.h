@@ -40,6 +40,10 @@ struct IconSearchResult {
 // user has set an API key. The search runs in the background under one 10 second deadline; errors,
 // the API key prompt and the choice between several icons are handled here, so a caller only
 // connects IconSelected.
+/// Runs a search on the calling thread without asking anything; for background lookups.
+IconSearchResult SearchIconQuietly(const std::string& name, u64 title_id,
+                                   const std::string& api_key, const std::atomic_bool& cancel);
+
 class IconSearch : public QObject {
     Q_OBJECT
 public:

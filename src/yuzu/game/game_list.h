@@ -6,7 +6,13 @@
 
 #pragma once
 
+#include <atomic>
+#include <deque>
+#include <memory>
+
+#include <QHash>
 #include <QLabel>
+#include <QSet>
 #include <QLineEdit>
 #include <QList>
 #include <QPushButton>
@@ -25,6 +31,9 @@
 #include "yuzu/game/home_screen.h"
 
 class QVariantAnimation;
+struct IconSearchResult;
+template <typename T>
+class QFutureWatcher;
 
 class GameCard;
 class GameListModel;
@@ -134,6 +143,14 @@ private slots:
 private:
     void SetupViews();
     void ApplySortOrder();
+
+    /// Covers for games without an icon: cached ones are shown, missing ones fetched if enabled.
+    void ApplyCovers();
+    void FetchNextCover();
+    void OnCoverFound();
+    void SaveCover(u64 program_id, const QImage& image);
+    void ShowCover(u64 program_id, const QPixmap& cover);
+    QString TitleOf(u64 program_id) const;
     void SetupScrollAnimation();
     bool eventFilter(QObject* obj, QEvent* event) override;
     void changeEvent(QEvent*) override;
@@ -177,6 +194,17 @@ private:
     bool m_isTreeMode = true;
     bool nup_conversion_running{};
     bool filter_visible = true;
+
+    struct CoverRequest {
+        u64 program_id;
+        QString name;
+    };
+    std::deque<CoverRequest> cover_queue;
+    QSet<u64> cover_queued;
+    QHash<u64, QPixmap> cover_cache;
+    QFutureWatcher<IconSearchResult>* cover_watcher = nullptr;
+    std::shared_ptr<std::atomic_bool> cover_cancel = std::make_shared<std::atomic_bool>(false);
+    u64 cover_pending_id = 0;
     QAbstractItemView* m_currentView = nullptr;
 };
 

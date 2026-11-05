@@ -218,6 +218,8 @@ struct Values {
     // "classic" uses the desktop theme chosen in `theme`.
     Setting<std::string> home_theme{linkage, {}, "home_theme", Category::UiGameList};
     Setting<std::string> home_wallpaper{linkage, {}, "home_wallpaper", Category::UiGameList};
+    // Looks up cover art online for games without an icon; sends their names and title IDs.
+    Setting<bool> download_covers{linkage, false, "download_covers", Category::UiGameList};
 
     std::atomic_bool is_game_list_reload_pending{false};
     Setting<bool> cache_game_list{linkage, true, "cache_game_list", Category::UiGameList};

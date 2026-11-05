@@ -6,7 +6,9 @@
 #include <memory>
 #include <QWidget>
 
+class QCheckBox;
 class QComboBox;
+class QLineEdit;
 #include "common/settings_enums.h"
 
 namespace Core {
@@ -53,6 +55,8 @@ private:
     void UpdateWidthText();
 
     QComboBox* appearance_combobox = nullptr;
+    QCheckBox* download_covers_checkbox = nullptr;
+    QLineEdit* steamgriddb_key_edit = nullptr;
     std::unique_ptr<Ui::ConfigureUi> ui;
 
     Settings::AspectRatio ratio;
