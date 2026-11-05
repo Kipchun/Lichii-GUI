@@ -3,6 +3,8 @@
 
 #include <algorithm>
 
+#include <QDir>
+#include <QFileInfo>
 #include <QKeyEvent>
 #include <QPainter>
 #include <QStyledItemDelegate>
@@ -24,6 +26,16 @@ constexpr double GapShare = 14.0 / 256.0;
 QRect TileRect(const QRect& cell, int tile) {
     return QRect(cell.left() + (cell.width() - tile) / 2, cell.top() + (cell.height() - tile) / 2,
                  tile, tile);
+}
+
+// A tile without art shows its game's name; a dump with no usable name falls back to its folder.
+QString TileTitle(const QModelIndex& index) {
+    const QString title = index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0);
+    if (!title.trimmed().isEmpty()) {
+        return title;
+    }
+    const QFileInfo file(index.data(GameListItemPath::FullPathRole).toString());
+    return file.fileName() == QStringLiteral("main") ? file.dir().dirName() : file.completeBaseName();
 }
 
 class SoftwareTile : public QStyledItemDelegate {
@@ -58,8 +70,7 @@ public:
             painter->setFont(font);
             painter->setPen(text_color);
             painter->drawText(tile.adjusted(tile_size / 10, 0, -tile_size / 10, 0),
-                              Qt::AlignCenter | Qt::TextWordWrap,
-                              index.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0));
+                              Qt::AlignCenter | Qt::TextWordWrap, TileTitle(index));
         } else {
             const int side = std::min(art.width(), art.height());
             painter->drawPixmap(tile, art,
@@ -69,8 +80,14 @@ public:
         // As on the Switch, only the focused row shows its selection.
         const bool focused = option.widget && option.widget->window()->focusWidget() == option.widget;
         if ((option.state & QStyle::State_Selected) && focused) {
-            const qreal width = std::max(3.0, tile_size * 0.017);
-            const qreal offset = tile_size * 0.012 + width / 2;
+            // The view repaints only this cell when the selection moves, so anything drawn past it
+            // stays behind on the neighbouring tile. Keep the whole stroke, including its
+            // antialiased edge, a pixel inside the cell.
+            const int margin = std::min(option.rect.width() - tile_size,
+                                        option.rect.height() - tile_size) / 2;
+            const qreal width = std::clamp(tile_size * 0.017, 2.0, std::max(2.0, margin * 0.45));
+            const qreal offset =
+                std::min(tile_size * 0.012 + width / 2, std::max(width / 2, margin - width / 2 - 1.0));
             const qreal value = pulse->currentValue().toReal();
             painter->setPen(QPen(MixColors(frame_dark, frame_light, value), width));
             painter->setBrush(Qt::NoBrush);

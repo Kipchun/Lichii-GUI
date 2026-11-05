@@ -36,6 +36,7 @@
 #include "qt_common/qt_common.h"
 
 #include "qt_common/game_list/game_list_p.h"
+#include "qt_common/game_list/known_titles.h"
 
 #include "qt_common/game_list/model.h"
 #include "qt_common/game_list/discovery.h"
@@ -188,7 +189,11 @@ QString FormatGameName(const std::string& physical_name) {
 // game folder.
 QString LooseExeFSName(const std::string& physical_name) {
     QDir dir = QFileInfo(QString::fromStdString(physical_name)).dir();
-    if (dir.dirName().compare(QStringLiteral("exefs"), Qt::CaseInsensitive) != 0 || !dir.cdUp()) {
+    // A dump whose ExeFS folder has another name (such as "Section_0") is named after it.
+    if (dir.dirName().compare(QStringLiteral("exefs"), Qt::CaseInsensitive) != 0) {
+        return dir.dirName();
+    }
+    if (!dir.cdUp()) {
         return {};
     }
 
@@ -468,7 +473,12 @@ void GameListWorker::ScanFileSystem(ScanTarget target, const std::vector<std::fi
                 const auto res3 = app_loader->ReadTitle(name);
                 if ((res3 != Loader::ResultStatus::Success || name.empty() || name == " ") &&
                     IsExtractedNCAMain(physical_name)) {
-                    if (const QString loose = LooseExeFSName(physical_name); !loose.isEmpty()) {
+                    // Folder names of loose dumps are often a version number or a shared folder
+                    // such as "Roms", so a known title name comes first.
+                    if (const auto known = QtCommon::Game::KnownTitleName(id); !known.empty()) {
+                        name = std::string{known};
+                    } else if (const QString loose = LooseExeFSName(physical_name);
+                               !loose.isEmpty()) {
                         name = loose.toStdString();
                     }
                 }

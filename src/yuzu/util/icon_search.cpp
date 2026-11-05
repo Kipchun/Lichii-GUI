@@ -37,6 +37,7 @@
 #include "common/logging.h"
 #include "common/string_util.h"
 #include "qt_common/config/uisettings.h"
+#include "qt_common/game_list/known_titles.h"
 #ifdef YUZU_BUNDLED_OPENSSL
 #include <openssl/cert.h>
 #endif
@@ -90,27 +91,6 @@ std::string NormalizeGameSlug(std::string title) {
 }
 
 std::string ResolveGameNameAlias(const std::string& raw_name, u64 title_id) {
-    static const std::unordered_map<u64, std::string> by_title_id{
-        {0x0400C3F00006E000ULL, "Mario Kart World"},
-        {0x040074A01BF12000ULL, "Donkey Kong Bananza"},
-        {0x040077201BE50000ULL, "Kirby Air Riders"},
-        {0x04007C6028AA8000ULL, "Yoshi and the Mysterious Book"},
-        {0x0400D4201C6EA000ULL, "Mario Tennis Fever"},
-        {0x0400E88025B1A000ULL, "Star Fox"},
-        {0x04007EF01F8AE000ULL, "Fire Emblem: Fortune's Weave"},
-        {0x04008E001F098000ULL, "Nintendo Switch Sports Resort"},
-        {0x0400A3A01EE4C000ULL, "Pokemon Pokopia"},
-        {0x0400A4802437E000ULL, "Drag x Drive"},
-        {0x040041E0212AE000ULL, "Fast Fusion"},
-        {0x040057C02159A000ULL, "Nintendo Switch 2 Welcome Tour"},
-        {0x0400486024DEC000ULL, "The Legend of Zelda: Ocarina of Time"},
-        {0x0100000000010000ULL, "Super Mario Odyssey"},
-        {0x0100152000022000ULL, "Mario Kart 8 Deluxe"},
-        {0x01007EF00011E000ULL, "The Legend of Zelda: Breath of the Wild"},
-        {0x0100F2C0115B6000ULL, "The Legend of Zelda: Tears of the Kingdom"},
-        {0x01006A800016E000ULL, "Super Smash Bros. Ultimate"},
-        {0x01006F8002326000ULL, "Animal Crossing: New Horizons"},
-    };
     static const std::unordered_map<std::string, std::string> by_alias{
         {"mkw", "Mario Kart World"},
         {"mariokartworld", "Mario Kart World"},
@@ -141,8 +121,8 @@ std::string ResolveGameNameAlias(const std::string& raw_name, u64 title_id) {
         return it->second;
     }
     if (slug.empty()) {
-        if (const auto it = by_title_id.find(title_id); it != by_title_id.end()) {
-            return it->second;
+        if (const auto known = QtCommon::Game::KnownTitleName(title_id); !known.empty()) {
+            return std::string{known};
         }
     }
     return raw_name;
