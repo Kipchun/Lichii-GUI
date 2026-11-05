@@ -414,6 +414,14 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     statusBar()->hide();
 
     startup_icon_theme = QIcon::themeName();
+    startup_style = QApplication::style()->name();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
+        if (UISettings::values.home_theme.GetValue().empty()) {
+            UpdateUITheme();
+        }
+    });
+#endif
     // fallback can only be set once, colorful theme icons are okay on both light/dark
     QIcon::setFallbackThemeName(QStringLiteral("colorful"));
     QIcon::setFallbackSearchPaths(QStringList(QStringLiteral(":/icons")));
@@ -3552,7 +3560,7 @@ void MainWindow::SetupHomeScreen() {
     const QString wallpaper = QString::fromStdString(UISettings::values.home_wallpaper.GetValue());
     for (HomeScreen* screen : std::array<HomeScreen*, 2>{game_list, game_list_placeholder}) {
         screen->BindActions(actions);
-        screen->SetTheme(theme);
+        screen->SetTheme(theme, UISettings::IsDarkTheme());
         screen->SetWallpaper(wallpaper);
         connect(screen, &HomeScreen::ThemeSelected, this, &MainWindow::SetHomeTheme);
         connect(screen, &HomeScreen::ControllersRequested, this, &MainWindow::OnConfigureControls);
@@ -3603,8 +3611,7 @@ void MainWindow::UpdateHomeScreenStatus() {
 
 void MainWindow::SetHomeTheme(const QString& theme_id) {
     UISettings::values.home_theme.SetValue(theme_id.toStdString());
-    game_list->SetTheme(theme_id);
-    game_list_placeholder->SetTheme(theme_id);
+    UpdateUITheme();
     OnSaveConfig();
 }
 
@@ -3685,6 +3692,7 @@ void MainWindow::RunConfigureDialog(ConfigurePage page) {
     }
 
     const auto old_theme = UISettings::values.theme;
+    const auto old_appearance = UISettings::values.home_theme.GetValue();
     const bool old_discord_presence = UISettings::values.enable_discord_presence.GetValue();
     const auto old_language_index = Settings::values.language_index.GetValue();
     const bool old_gamemode = UISettings::values.enable_gamemode.GetValue();
@@ -3693,9 +3701,12 @@ void MainWindow::RunConfigureDialog(ConfigurePage page) {
 #endif
 
     Settings::SetConfiguringGlobal(true);
-    auto* configure_dialog =
-        new ConfigureDialog(this, hotkey_registry, input_subsystem.get(), vk_device_records,
-                            *QtCommon::system, !multiplayer_state->IsHostingPublicRoom());
+    // Without a running game the settings replace the home screen in the main window;
+    // otherwise they stay a separate window so they never cover the game.
+    const bool embed = !emulation_running;
+    auto* configure_dialog = new ConfigureDialog(
+        embed ? centralWidget() : this, hotkey_registry, input_subsystem.get(), vk_device_records,
+        *QtCommon::system, !multiplayer_state->IsHostingPublicRoom(), embed, &game_list->Theme());
     settings_page = configure_dialog;
     connect(configure_dialog, &ConfigureDialog::LanguageChanged, this,
             &MainWindow::OnLanguageChanged);
@@ -3709,9 +3720,6 @@ void MainWindow::RunConfigureDialog(ConfigurePage page) {
         configure_dialog->ShowProfiles();
     }
 
-    // Without a running game the settings replace the home screen in the main window;
-    // otherwise they stay a separate window so they never cover the game.
-    const bool embed = !emulation_running;
     connect(configure_dialog, &QDialog::finished, this,
             [=, this](int result) {
         configure_dialog->deleteLater();
@@ -3762,7 +3770,8 @@ void MainWindow::RunConfigureDialog(ConfigurePage page) {
         }
         InitializeHotkeys();
 
-        if (UISettings::values.theme != old_theme) {
+        if (UISettings::values.theme != old_theme ||
+            UISettings::values.home_theme.GetValue() != old_appearance) {
             UpdateUITheme();
         }
         if (UISettings::values.enable_discord_presence.GetValue() != old_discord_presence) {
@@ -5306,50 +5315,81 @@ static void AdjustLinkColor() {
 }
 
 void MainWindow::UpdateUITheme() {
-    const QString default_theme = QString::fromUtf8(UISettings::themes[size_t(UISettings::default_theme)].second);
-    QString current_theme = QString::fromStdString(UISettings::values.theme);
-
-    if (current_theme.isEmpty())
-        current_theme = default_theme;
-
-#ifdef _WIN32
-    QIcon::setThemeName(current_theme);
-    AdjustLinkColor();
-#else
-    if (current_theme == QStringLiteral("default") || current_theme == QStringLiteral("colorful")) {
-        QIcon::setThemeName(current_theme == QStringLiteral("colorful") ? current_theme : startup_icon_theme);
-        QIcon::setThemeSearchPaths(QStringList(default_theme_paths));
-        if (isDarkMode()) {
-            current_theme = QStringLiteral("default_dark");
+    const QString appearance = QString::fromStdString(UISettings::values.home_theme.GetValue());
+    const bool dark = UISettings::IsDarkTheme();
+    if (appearance != QStringLiteral("classic")) {
+        // Fusion honours the palette everywhere, so every window follows the same colours.
+        if (QApplication::style()->name().compare(QStringLiteral("fusion"), Qt::CaseInsensitive) != 0) {
+            QApplication::setStyle(QStringLiteral("Fusion"));
         }
-    } else {
-        QIcon::setThemeName(current_theme);
-        QIcon::setThemeSearchPaths(QStringList(QStringLiteral(":/icons")));
-        AdjustLinkColor();
-    }
-#endif
-
-    if (current_theme != default_theme) {
-        QString theme_uri{QStringLiteral(":%1/style.qss").arg(current_theme)};
-        QFile f(theme_uri);
-        if (!f.open(QFile::ReadOnly | QFile::Text)) {
-            LOG_ERROR(Frontend, "Unable to open style \"{}\", fallback to the default theme",
-                      UISettings::values.theme);
-            current_theme = default_theme;
-        }
-    }
-
-    QString theme_uri{QStringLiteral(":%1/style.qss").arg(current_theme)};
-    QFile f(theme_uri);
-    if (f.open(QFile::ReadOnly | QFile::Text)) {
-        QTextStream ts(&f);
-        qApp->setStyleSheet(ts.readAll());
-        setStyleSheet(ts.readAll());
-    } else {
-        LOG_ERROR(Frontend, "Unable to set style \"{}\", stylesheet file not found",
-                  UISettings::values.theme);
+        const HomeTheme theme = dark ? HomeTheme::BasicBlack() : HomeTheme::BasicWhite();
+        qApp->setPalette(theme.ApplicationPalette());
         qApp->setStyleSheet({});
         setStyleSheet({});
+        menuBar()->setStyleSheet(theme.ChromeStyleSheet());
+        statusBar()->setStyleSheet(theme.ChromeStyleSheet());
+        QIcon::setThemeName(dark ? QStringLiteral("colorful_dark") : QStringLiteral("colorful"));
+#ifndef _WIN32
+        QIcon::setThemeSearchPaths(QStringList(QStringLiteral(":/icons")));
+#endif
+    } else {
+        if (QApplication::style()->name().compare(startup_style, Qt::CaseInsensitive) != 0) {
+            QApplication::setStyle(startup_style);
+        }
+        qApp->setPalette(QApplication::style()->standardPalette());
+        menuBar()->setStyleSheet({});
+        statusBar()->setStyleSheet({});
+        const QString default_theme = QString::fromUtf8(UISettings::themes[size_t(UISettings::default_theme)].second);
+        QString current_theme = QString::fromStdString(UISettings::values.theme);
+
+        if (current_theme.isEmpty())
+            current_theme = default_theme;
+
+#ifdef _WIN32
+        QIcon::setThemeName(current_theme);
+        AdjustLinkColor();
+#else
+        if (current_theme == QStringLiteral("default") || current_theme == QStringLiteral("colorful")) {
+            QIcon::setThemeName(current_theme == QStringLiteral("colorful") ? current_theme : startup_icon_theme);
+            QIcon::setThemeSearchPaths(QStringList(default_theme_paths));
+            if (isDarkMode()) {
+                current_theme = QStringLiteral("default_dark");
+            }
+        } else {
+            QIcon::setThemeName(current_theme);
+            QIcon::setThemeSearchPaths(QStringList(QStringLiteral(":/icons")));
+            AdjustLinkColor();
+        }
+#endif
+
+        if (current_theme != default_theme) {
+            QString theme_uri{QStringLiteral(":%1/style.qss").arg(current_theme)};
+            QFile f(theme_uri);
+            if (!f.open(QFile::ReadOnly | QFile::Text)) {
+                LOG_ERROR(Frontend, "Unable to open style \"{}\", fallback to the default theme",
+                          UISettings::values.theme);
+                current_theme = default_theme;
+            }
+        }
+
+        QString theme_uri{QStringLiteral(":%1/style.qss").arg(current_theme)};
+        QFile f(theme_uri);
+        if (f.open(QFile::ReadOnly | QFile::Text)) {
+            QTextStream ts(&f);
+            qApp->setStyleSheet(ts.readAll());
+            setStyleSheet(ts.readAll());
+        } else {
+            LOG_ERROR(Frontend, "Unable to set style \"{}\", stylesheet file not found",
+                      UISettings::values.theme);
+            qApp->setStyleSheet({});
+            setStyleSheet({});
+        }
+
+    }
+
+    if (game_list) {
+        game_list->SetTheme(appearance, dark);
+        game_list_placeholder->SetTheme(appearance, dark);
     }
 
 #ifdef _WIN32

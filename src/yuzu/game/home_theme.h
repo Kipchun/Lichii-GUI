@@ -5,6 +5,7 @@
 
 #include <QColor>
 #include <QIcon>
+#include <QPalette>
 #include <QPixmap>
 #include <QString>
 
@@ -21,11 +22,16 @@ struct HomeTheme {
 
     static HomeTheme BasicBlack();
     static HomeTheme BasicWhite();
-    /// Accepts "basic_black" or "basic_white"; anything else follows the application palette.
+    /// Accepts "basic_black" or "basic_white"; anything else follows the system colour scheme.
     static HomeTheme FromId(const QString& id);
+    static bool SystemPrefersDark();
 
     /// Restyles a settings dialog and its pages in the System Settings look.
     QString SettingsStyleSheet() const;
+    /// For the main window's menu bar and status bar only; the rest of the application follows
+    /// ApplicationPalette under the Fusion style.
+    QString ChromeStyleSheet() const;
+    QPalette ApplicationPalette() const;
 };
 
 enum class HomeSymbol { Gamepad, Settings, Handbook, Bag, Album, Power };

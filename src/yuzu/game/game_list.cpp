@@ -125,6 +125,10 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
     qRegisterMetaType<QList<QStandardItem*>>("QList<QStandardItem*>");
 
+    // Match the model to the saved view first, so this does not start a scan that MainWindow's
+    // own PopulateAsync then cancels.
+    m_isTreeMode = UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::TreeView;
+    item_model->SetFlat(!m_isTreeMode);
     ResetViewMode();
 }
 

@@ -3,17 +3,20 @@
 
 #include "yuzu/configuration/configure_ui.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <set>
 #include <string>
 #include <utility>
 
+#include <QBoxLayout>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDirIterator>
 #include <QFileDialog>
+#include <QLabel>
 #include <QString>
 #include <QToolButton>
 #include <QVariant>
@@ -100,6 +103,24 @@ ConfigureUi::ConfigureUi(Core::System& system_, QWidget* parent)
                                     QString::fromUtf8(theme.second));
     }
 
+    // Appearance themes the whole application; the old desktop themes become its Classic mode.
+    auto* appearance_row = new QHBoxLayout;
+    appearance_row->addWidget(new QLabel(tr("Appearance:"), this));
+    appearance_combobox = new QComboBox(this);
+    appearance_combobox->addItem(tr("Match System"), QString{});
+    appearance_combobox->addItem(tr("Light"), QStringLiteral("basic_white"));
+    appearance_combobox->addItem(tr("Dark"), QStringLiteral("basic_black"));
+    appearance_combobox->addItem(tr("Classic"), QStringLiteral("classic"));
+    appearance_row->addWidget(appearance_combobox);
+    if (auto* parent_layout = qobject_cast<QBoxLayout*>(ui->horizontalLayout_3->parent())) {
+        parent_layout->insertLayout(parent_layout->indexOf(ui->horizontalLayout_3), appearance_row);
+    }
+    connect(appearance_combobox, &QComboBox::currentIndexChanged, this, [this] {
+        const bool classic = appearance_combobox->currentData().toString() == QStringLiteral("classic");
+        ui->theme_label->setEnabled(classic);
+        ui->theme_combobox->setEnabled(classic);
+    });
+
     InitializeIconSizeComboBox();
     InitializeRowComboBoxes();
 
@@ -149,6 +170,7 @@ ConfigureUi::ConfigureUi(Core::System& system_, QWidget* parent)
 ConfigureUi::~ConfigureUi() = default;
 
 void ConfigureUi::ApplyConfiguration() {
+    UISettings::values.home_theme = appearance_combobox->currentData().toString().toStdString();
     UISettings::values.theme =
         ui->theme_combobox->itemData(ui->theme_combobox->currentIndex()).toString().toStdString();
     UISettings::values.show_add_ons = ui->show_add_ons->isChecked();
@@ -166,7 +188,6 @@ void ConfigureUi::ApplyConfiguration() {
     const u32 height = ScreenshotDimensionToInt(ui->screenshot_height->currentText());
     UISettings::values.screenshot_height.SetValue(height);
 
-    RequestGameListUpdate();
     system.ApplySettings();
 }
 
@@ -175,6 +196,12 @@ void ConfigureUi::RequestGameListUpdate() {
 }
 
 void ConfigureUi::SetConfiguration() {
+    const int appearance = appearance_combobox->findData(
+        QString::fromStdString(UISettings::values.home_theme.GetValue()));
+    appearance_combobox->setCurrentIndex(std::max(appearance, 0));
+    const bool classic = appearance_combobox->currentData().toString() == QStringLiteral("classic");
+    ui->theme_label->setEnabled(classic);
+    ui->theme_combobox->setEnabled(classic);
     ui->theme_combobox->setCurrentIndex(
         ui->theme_combobox->findData(QString::fromStdString(UISettings::values.theme)));
     ui->language_combobox->setCurrentIndex(ui->language_combobox->findData(

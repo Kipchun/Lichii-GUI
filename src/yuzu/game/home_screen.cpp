@@ -309,8 +309,9 @@ void HomeScreen::SetConnectedPlayers(int count) {
     controller_button->setToolTip(tr("%n controller(s) connected", "", count));
 }
 
-void HomeScreen::SetTheme(const QString& theme_id_) {
-    theme_id = theme_id_;
+void HomeScreen::SetTheme(const QString& choice, bool dark) {
+    theme_id = choice;
+    dark_mode = dark;
     ApplyTheme();
 }
 
@@ -322,9 +323,10 @@ void HomeScreen::SetWallpaper(const QString& path) {
 void HomeScreen::AddAppearanceActions(QMenu& menu) {
     auto* group = new QActionGroup(&menu);
     const std::array themes{
-        std::pair{QString{}, tr("Match Application Theme")},
-        std::pair{QStringLiteral("basic_white"), tr("Basic White")},
-        std::pair{QStringLiteral("basic_black"), tr("Basic Black")},
+        std::pair{QString{}, tr("Match System")},
+        std::pair{QStringLiteral("basic_white"), tr("Light")},
+        std::pair{QStringLiteral("basic_black"), tr("Dark")},
+        std::pair{QStringLiteral("classic"), tr("Classic Desktop Theme")},
     };
     for (const auto& [id, name] : themes) {
         QAction* action = menu.addAction(name, this, [this, id] { emit ThemeSelected(id); });
@@ -470,7 +472,7 @@ void HomeScreen::FocusContent() {
 
 void HomeScreen::ApplyTheme() {
     const QString image = theme.background_image;
-    theme = HomeTheme::FromId(theme_id);
+    theme = dark_mode ? HomeTheme::BasicBlack() : HomeTheme::BasicWhite();
     theme.background_image = image;
     background = {};
 
@@ -582,8 +584,6 @@ void HomeScreen::UpdateClock() {
 void HomeScreen::changeEvent(QEvent* event) {
     if (event->type() == QEvent::LanguageChange) {
         RetranslateHome();
-    } else if (event->type() == QEvent::ApplicationPaletteChange && theme_id.isEmpty()) {
-        ApplyTheme();
     }
     QWidget::changeEvent(event);
 }

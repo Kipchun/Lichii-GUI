@@ -5,6 +5,8 @@
 
 #include <memory>
 #include <QWidget>
+
+class QComboBox;
 #include "common/settings_enums.h"
 
 namespace Core {
@@ -50,6 +52,7 @@ private:
 
     void UpdateWidthText();
 
+    QComboBox* appearance_combobox = nullptr;
     std::unique_ptr<Ui::ConfigureUi> ui;
 
     Settings::AspectRatio ratio;

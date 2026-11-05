@@ -37,7 +37,8 @@
 ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
                                  InputCommon::InputSubsystem* input_subsystem,
                                  std::vector<VkDeviceInfo::Record>& vk_device_records,
-                                 Core::System& system_, bool enable_web_config)
+                                 Core::System& system_, bool enable_web_config, bool embed,
+                                 const HomeTheme* theme)
     : QDialog(parent), ui{std::make_unique<Ui::ConfigureDialog>()}, registry(registry_),
       system{system_},
       builder{std::make_unique<ConfigurationShared::Builder>(this, !system_.IsPoweredOn())},
@@ -65,6 +66,18 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
       system_tab{std::make_unique<ConfigureSystem>(system_, nullptr, *builder, this)},
       web_tab{std::make_unique<ConfigureWeb>(this)} {
     Settings::SetConfiguringGlobal(true);
+
+    // Moving into the main window or changing the style sheet later restyles every widget again,
+    // which made opening the settings take more than half a second longer.
+    if (embed) {
+        embed_host = parent;
+        setParent(parent, Qt::Widget);
+        setAttribute(Qt::WA_StyledBackground);
+        setAutoFillBackground(true);
+    }
+    if (theme) {
+        setStyleSheet(theme->SettingsStyleSheet());
+    }
 
     ui->setupUi(this);
 
@@ -112,7 +125,10 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
                 &ConfigureDialog::HandleApplyButtonClicked);
     }
 
-    adjustSize();
+    // An embedded page takes its host's size, so measuring every page here would be wasted.
+    if (!embed) {
+        adjustSize();
+    }
     ui->selectorList->setCurrentRow(0);
 
     // Selects the leftmost button on the bottom bar (Cancel as of writing)
@@ -134,7 +150,9 @@ void ConfigureDialog::ShowProfiles() {
 }
 
 void ConfigureDialog::ApplyHomeTheme(const HomeTheme& theme) {
-    setStyleSheet(theme.SettingsStyleSheet());
+    if (const QString sheet = theme.SettingsStyleSheet(); styleSheet() != sheet) {
+        setStyleSheet(sheet);
+    }
     ui->label->setObjectName(QStringLiteral("SettingsNotice"));
 
     const auto make_rule = [this] {
@@ -176,10 +194,12 @@ void ConfigureDialog::ApplyHomeTheme(const HomeTheme& theme) {
 }
 
 void ConfigureDialog::EmbedIn(QWidget* host) {
-    embed_host = host;
-    setParent(host, Qt::Widget);
-    setAttribute(Qt::WA_StyledBackground);
-    setAutoFillBackground(true);
+    if (embed_host != host || isWindow()) {
+        embed_host = host;
+        setParent(host, Qt::Widget);
+        setAttribute(Qt::WA_StyledBackground);
+        setAutoFillBackground(true);
+    }
     setGeometry(host->rect());
     host->installEventFilter(this);
     raise();

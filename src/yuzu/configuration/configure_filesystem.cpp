@@ -78,6 +78,17 @@ void ConfigureFilesystem::SetConfiguration() {
 }
 
 void ConfigureFilesystem::ApplyConfiguration() {
+    // The library lists installed titles and mods from these folders.
+    const auto changed = [](Common::FS::EdenPath path, const QLineEdit* edit) {
+        return Common::FS::PathToUTF8String(Common::FS::GetEdenPath(path)) !=
+               edit->text().toStdString();
+    };
+    if (changed(Common::FS::EdenPath::NANDDir, ui->nand_directory_edit) ||
+        changed(Common::FS::EdenPath::SDMCDir, ui->sdmc_directory_edit) ||
+        changed(Common::FS::EdenPath::LoadDir, ui->load_path_edit)) {
+        UISettings::values.is_game_list_reload_pending.exchange(true);
+    }
+
     Common::FS::SetEdenPath(Common::FS::EdenPath::NANDDir,
                             ui->nand_directory_edit->text().toStdString());
     Common::FS::SetEdenPath(Common::FS::EdenPath::SDMCDir,

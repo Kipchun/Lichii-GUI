@@ -533,6 +533,7 @@ private:
 
     GameListPlaceholder* game_list_placeholder = nullptr;
     QPointer<ConfigureDialog> settings_page;
+    QString startup_style;
 
     std::vector<VkDeviceInfo::Record> vk_device_records;
 

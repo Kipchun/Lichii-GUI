@@ -214,6 +214,8 @@ struct Values {
     Setting<u8> row_2_text_id{linkage, 2, "row_2_text_id", Category::UiGameList};
     Setting<Settings::GameListMode> game_list_mode{linkage, Settings::GameListMode::CarouselView, "game_list_mode", Category::UiGameList};
     Setting<bool> show_game_name{linkage, true, "show_game_name", Category::UiGameList};
+    // Appearance: "" follows the system, "basic_white" is light, "basic_black" is dark and
+    // "classic" uses the desktop theme chosen in `theme`.
     Setting<std::string> home_theme{linkage, {}, "home_theme", Category::UiGameList};
     Setting<std::string> home_wallpaper{linkage, {}, "home_wallpaper", Category::UiGameList};
 

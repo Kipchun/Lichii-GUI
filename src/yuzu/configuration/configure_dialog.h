@@ -52,10 +52,13 @@ class ConfigureDialog : public QDialog {
     Q_OBJECT
 
 public:
+    /// With embed set, parent is the widget the page covers instead of the window's owner. A
+    /// theme given here is applied before any page is styled, so each widget is styled once.
     explicit ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
                              InputCommon::InputSubsystem* input_subsystem,
                              std::vector<VkDeviceInfo::Record>& vk_device_records,
-                             Core::System& system_, bool enable_web_config = true);
+                             Core::System& system_, bool enable_web_config = true,
+                             bool embed = false, const HomeTheme* theme = nullptr);
     ~ConfigureDialog() override;
 
     void ApplyConfiguration();

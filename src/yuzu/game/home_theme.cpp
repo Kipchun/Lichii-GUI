@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#include <QApplication>
+#include <QGuiApplication>
+#include <QStyleHints>
 #include <QDir>
 #include <QFile>
 #include <QPainter>
@@ -54,133 +55,224 @@ HomeTheme HomeTheme::FromId(const QString& id) {
     if (id == QStringLiteral("basic_black")) {
         return BasicBlack();
     }
-    const bool dark = QApplication::palette().color(QPalette::Window).lightness() < 128;
-    return dark ? BasicBlack() : BasicWhite();
+    return SystemPrefersDark() ? BasicBlack() : BasicWhite();
 }
 
-QString HomeTheme::SettingsStyleSheet() const {
-    const bool dark = background.lightness() < 128;
-    const QColor secondary = MixColors(text, background, 0.38);
-    const QColor field = dark ? MixColors(button, background, 0.45) : button;
-    const QColor border = MixColors(text, background, 0.72);
-    const QColor hover = MixColors(background, text, 0.08);
-    const QColor selected_row = MixColors(background, accent, 0.12);
+namespace {
+struct DerivedColors {
+    QColor secondary;
+    QColor field;
+    QColor border;
+    QColor hover;
+    QColor selected_row;
+};
 
-    // Every rule is scoped to the dialog so nothing leaks into the rest of the application.
-    QString sheet = QStringLiteral(R"(
-        QDialog#ConfigureDialog { background: @bg; }
-        #ConfigureDialog QWidget { color: @text; background: transparent; }
-        #ConfigureDialog QLabel, #ConfigureDialog QCheckBox, #ConfigureDialog QRadioButton,
-        #ConfigureDialog QGroupBox { background: transparent; }
-        #ConfigureDialog QLabel:disabled, #ConfigureDialog QCheckBox:disabled,
-        #ConfigureDialog QRadioButton:disabled { color: @secondary; }
-        #ConfigureDialog QLabel#SettingsTitle { font-size: 24px; }
-        #ConfigureDialog QLabel#SettingsNotice { color: @secondary; }
-        #ConfigureDialog QFrame#SettingsRule { background: @muted; border: none;
-                                               min-height: 1px; max-height: 1px; }
-
-        #ConfigureDialog QListWidget#selectorList { background: transparent; border: none;
-            border-right: 1px solid @muted; outline: 0; font-size: 17px; padding-top: 6px; }
-        #ConfigureDialog QListWidget#selectorList::item { padding: 11px 12px; color: @text;
-            border-left: 4px solid transparent; }
-        #ConfigureDialog QListWidget#selectorList::item:hover:!selected { background: @hover; }
-        #ConfigureDialog QListWidget#selectorList::item:selected { color: @accent;
-            background: @selrow; border-left: 4px solid @accent; }
-
-        #ConfigureDialog QTabWidget::pane { border: none; background: @bg; }
-        #ConfigureDialog QTabWidget > QWidget, #ConfigureDialog QStackedWidget,
-        #ConfigureDialog QScrollArea, #ConfigureDialog QScrollArea > QWidget > QWidget {
-            background: @bg; border: none; }
-        #ConfigureDialog QTabBar { background: transparent; }
-        #ConfigureDialog QTabBar::tab { background: transparent; color: @secondary; border: none;
-            border-bottom: 3px solid transparent; padding: 8px 14px; font-size: 14px; }
-        #ConfigureDialog QTabBar::tab:hover { color: @text; }
-        #ConfigureDialog QTabBar::tab:selected { color: @text; border-bottom: 3px solid @accent; }
-
-        #ConfigureDialog QGroupBox { border: 1px solid @border; border-radius: 8px;
-            margin-top: 18px; padding: 10px 6px 6px 6px; }
-        #ConfigureDialog QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 12px;
-            padding: 0 4px; color: @secondary; }
-
-        #ConfigureDialog QComboBox, #ConfigureDialog QSpinBox, #ConfigureDialog QDoubleSpinBox,
-        #ConfigureDialog QLineEdit, #ConfigureDialog QTimeEdit, #ConfigureDialog QDateTimeEdit {
-            background: @field; color: @text; border: 1px solid @border; border-radius: 6px;
-            padding: 4px 8px; min-height: 22px; selection-background-color: @accent; }
-        #ConfigureDialog QComboBox:focus, #ConfigureDialog QSpinBox:focus,
-        #ConfigureDialog QDoubleSpinBox:focus, #ConfigureDialog QLineEdit:focus,
-        #ConfigureDialog QTimeEdit:focus, #ConfigureDialog QDateTimeEdit:focus {
-            border: 2px solid @accent; }
-        #ConfigureDialog QComboBox:disabled, #ConfigureDialog QSpinBox:disabled,
-        #ConfigureDialog QDoubleSpinBox:disabled, #ConfigureDialog QLineEdit:disabled {
-            color: @secondary; }
-        #ConfigureDialog QComboBox::drop-down { border: none; width: 26px; }
-        #ConfigureDialog QComboBox::down-arrow { image: url(@arrowdown); width: 10px; height: 6px; }
-        #ConfigureDialog QAbstractSpinBox::up-button, #ConfigureDialog QAbstractSpinBox::down-button {
-            border: none; background: transparent; width: 20px; subcontrol-origin: border; }
-        #ConfigureDialog QAbstractSpinBox::up-button { subcontrol-position: top right; }
-        #ConfigureDialog QAbstractSpinBox::down-button { subcontrol-position: bottom right; }
-        #ConfigureDialog QAbstractSpinBox::up-arrow { image: url(@arrowup); width: 10px; height: 6px; }
-        #ConfigureDialog QAbstractSpinBox::down-arrow { image: url(@arrowdown); width: 10px; height: 6px; }
-        #ConfigureDialog QComboBox QAbstractItemView { background: @field; color: @text;
-            border: 1px solid @border; outline: 0; selection-background-color: @accent;
-            selection-color: #ffffff; }
-
-        #ConfigureDialog QPushButton, #ConfigureDialog QToolButton { background: @field; color: @text;
-            border: 1px solid @border; border-radius: 6px; padding: 5px 14px; }
-        #ConfigureDialog QPushButton:hover, #ConfigureDialog QToolButton:hover { border-color: @accent; }
-        #ConfigureDialog QPushButton:focus, #ConfigureDialog QToolButton:focus { border: 2px solid @accent; }
-        #ConfigureDialog QPushButton:pressed, #ConfigureDialog QToolButton:pressed { background: @hover; }
-        #ConfigureDialog QPushButton:disabled, #ConfigureDialog QToolButton:disabled { color: @secondary; }
-        #ConfigureDialog QDialogButtonBox QPushButton { background: transparent; border: none;
-            border-radius: 6px; font-size: 16px; padding: 4px 10px; }
-        #ConfigureDialog QDialogButtonBox QPushButton:hover { background: @hover; }
-        #ConfigureDialog QDialogButtonBox QPushButton:focus { border: 2px solid @accent; }
-
-        #ConfigureDialog QCheckBox:focus, #ConfigureDialog QRadioButton:focus,
-        #ConfigureDialog QSlider:focus { background: @selrow; border-radius: 4px; }
-        #ConfigureDialog QTreeView:focus, #ConfigureDialog QTableView:focus,
-        #ConfigureDialog QListView:focus { border: 2px solid @accent; }
-        #ConfigureDialog QCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;
-            border: 2px solid @secondary; background: transparent; }
-        #ConfigureDialog QRadioButton::indicator { width: 16px; height: 16px; border-radius: 10px;
-            border: 2px solid @secondary; background: transparent; }
-        #ConfigureDialog QCheckBox::indicator:checked, #ConfigureDialog QRadioButton::indicator:checked {
-            background: @accent; border-color: @accent; }
-        #ConfigureDialog QCheckBox::indicator:indeterminate { background: @secondary; }
-        #ConfigureDialog QCheckBox::indicator:disabled, #ConfigureDialog QRadioButton::indicator:disabled {
-            border-color: @border; }
-
-        #ConfigureDialog QSlider::groove:horizontal { height: 4px; background: @border; border-radius: 2px; }
-        #ConfigureDialog QSlider::sub-page:horizontal { background: @accent; border-radius: 2px; }
-        #ConfigureDialog QSlider::handle:horizontal { background: @text; width: 16px; height: 16px;
-            margin: -6px 0; border-radius: 8px; }
-
-        #ConfigureDialog QTreeView, #ConfigureDialog QTableView, #ConfigureDialog QListView,
-        #ConfigureDialog QTreeWidget, #ConfigureDialog QListWidget, #ConfigureDialog QTableWidget {
-            background: @field; alternate-background-color: @hover; border: 1px solid @border;
-            border-radius: 6px; outline: 0; selection-background-color: @accent; selection-color: #ffffff; }
-        #ConfigureDialog QHeaderView::section { background: @bg; color: @secondary; border: none;
-            border-bottom: 1px solid @border; padding: 5px 8px; }
-
-        #ConfigureDialog QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
-        #ConfigureDialog QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
-        #ConfigureDialog QScrollBar::handle { background: @border; border-radius: 3px;
-            min-height: 24px; min-width: 24px; }
-        #ConfigureDialog QScrollBar::add-line, #ConfigureDialog QScrollBar::sub-line { width: 0; height: 0; }
-        #ConfigureDialog QScrollBar::add-page, #ConfigureDialog QScrollBar::sub-page { background: transparent; }
-    )");
-    // Longer names first so @selrow is not caught by a shorter token.
-    const std::pair<const char*, QColor> tokens[] = {
-        {"@secondary", secondary}, {"@selrow", selected_row}, {"@accent", accent},
-        {"@border", border},       {"@field", field},         {"@hover", hover},
-        {"@muted", muted},         {"@text", text},           {"@bg", background},
+DerivedColors Derive(const HomeTheme& theme) {
+    const bool dark = theme.background.lightness() < 128;
+    return {
+        MixColors(theme.text, theme.background, 0.38),
+        dark ? MixColors(theme.button, theme.background, 0.45) : theme.button,
+        MixColors(theme.text, theme.background, 0.72),
+        MixColors(theme.background, theme.text, 0.08),
+        MixColors(theme.background, theme.accent, 0.12),
     };
-    sheet.replace(QStringLiteral("@arrowdown"), ArrowImage(text, false));
-    sheet.replace(QStringLiteral("@arrowup"), ArrowImage(text, true));
+}
+
+// Controls shared by the whole application and the settings page. "@s" starts every selector so
+// the same rules can be scoped to one dialog or applied everywhere.
+constexpr const char* ControlRules = R"(
+    @sQGroupBox { border: 1px solid @border; border-radius: 8px; margin-top: 18px;
+        padding: 10px 6px 6px 6px; }
+    @sQGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 12px;
+        padding: 0 4px; color: @secondary; }
+
+    @sQComboBox, @sQSpinBox, @sQDoubleSpinBox, @sQLineEdit, @sQTimeEdit, @sQDateTimeEdit,
+    @sQDateEdit { background: @field; color: @text; border: 1px solid @border; border-radius: 6px;
+        padding: 4px 8px; min-height: 22px; selection-background-color: @accent; }
+    @sQComboBox:focus, @sQSpinBox:focus, @sQDoubleSpinBox:focus, @sQLineEdit:focus,
+    @sQTimeEdit:focus, @sQDateTimeEdit:focus, @sQDateEdit:focus { border: 2px solid @accent; }
+    @sQComboBox:disabled, @sQSpinBox:disabled, @sQDoubleSpinBox:disabled, @sQLineEdit:disabled {
+        color: @secondary; }
+    @sQComboBox::drop-down { border: none; width: 26px; }
+    @sQComboBox::down-arrow { image: url(@arrowdown); width: 10px; height: 6px; }
+    @sQComboBox QAbstractItemView { background: @field; color: @text; border: 1px solid @border;
+        outline: 0; selection-background-color: @accent; selection-color: #ffffff; }
+    @sQAbstractSpinBox::up-button, @sQAbstractSpinBox::down-button { border: none;
+        background: transparent; width: 20px; subcontrol-origin: border; }
+    @sQAbstractSpinBox::up-button { subcontrol-position: top right; }
+    @sQAbstractSpinBox::down-button { subcontrol-position: bottom right; }
+    @sQAbstractSpinBox::up-arrow { image: url(@arrowup); width: 10px; height: 6px; }
+    @sQAbstractSpinBox::down-arrow { image: url(@arrowdown); width: 10px; height: 6px; }
+    @sQPlainTextEdit, @sQTextEdit, @sQTextBrowser { background: @field; color: @text;
+        border: 1px solid @border; border-radius: 6px; selection-background-color: @accent; }
+
+    @sQPushButton { background: @field; color: @text; border: 1px solid @border;
+        border-radius: 6px; padding: 5px 14px; }
+    @sQPushButton:hover { border-color: @accent; }
+    @sQPushButton:focus { border: 2px solid @accent; }
+    @sQPushButton:pressed { background: @hover; }
+    @sQPushButton:disabled { color: @secondary; }
+    @sQPushButton:flat { background: transparent; border: none; }
+
+    @sQCheckBox, @sQRadioButton { background: transparent; }
+    @sQCheckBox:disabled, @sQRadioButton:disabled { color: @secondary; }
+    @sQCheckBox:focus, @sQRadioButton:focus, @sQSlider:focus { background: @selrow;
+        border-radius: 4px; }
+    @sQCheckBox::indicator { width: 16px; height: 16px; border-radius: 4px;
+        border: 2px solid @secondary; background: transparent; }
+    @sQRadioButton::indicator { width: 16px; height: 16px; border-radius: 10px;
+        border: 2px solid @secondary; background: transparent; }
+    @sQCheckBox::indicator:checked, @sQRadioButton::indicator:checked { background: @accent;
+        border-color: @accent; }
+    @sQCheckBox::indicator:indeterminate { background: @secondary; }
+    @sQCheckBox::indicator:disabled, @sQRadioButton::indicator:disabled { border-color: @border; }
+
+    @sQSlider::groove:horizontal { height: 4px; background: @border; border-radius: 2px; }
+    @sQSlider::sub-page:horizontal { background: @accent; border-radius: 2px; }
+    @sQSlider::handle:horizontal { background: @text; width: 16px; height: 16px; margin: -6px 0;
+        border-radius: 8px; }
+    @sQProgressBar { background: @field; border: 1px solid @border; border-radius: 6px;
+        text-align: center; color: @text; }
+    @sQProgressBar::chunk { background: @accent; border-radius: 5px; }
+
+    @sQTreeView, @sQTableView, @sQListView { background: @field; alternate-background-color: @hover;
+        border: 1px solid @border; border-radius: 6px; outline: 0;
+        selection-background-color: @accent; selection-color: #ffffff; }
+    @sQTreeView:focus, @sQTableView:focus, @sQListView:focus { border: 2px solid @accent; }
+    @sQHeaderView::section { background: @bg; color: @secondary; border: none;
+        border-bottom: 1px solid @border; padding: 5px 8px; }
+
+    @sQTabWidget::pane { border: none; background: @bg; }
+    @sQTabBar { background: transparent; }
+    @sQTabBar::tab { background: transparent; color: @secondary; border: none;
+        border-bottom: 3px solid transparent; padding: 8px 14px; }
+    @sQTabBar::tab:hover { color: @text; }
+    @sQTabBar::tab:selected { color: @text; border-bottom: 3px solid @accent; }
+
+    @sQScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+    @sQScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
+    @sQScrollBar::handle { background: @border; border-radius: 3px; min-height: 24px;
+        min-width: 24px; }
+    @sQScrollBar::add-line, @sQScrollBar::sub-line { width: 0; height: 0; }
+    @sQScrollBar::add-page, @sQScrollBar::sub-page { background: transparent; }
+)";
+
+// The settings page's own chrome; every rule is scoped to the dialog.
+constexpr const char* SettingsRules = R"(
+    QDialog#ConfigureDialog { background: @bg; }
+    #ConfigureDialog QWidget { color: @text; background: transparent; }
+    #ConfigureDialog QLabel, #ConfigureDialog QGroupBox { background: transparent; }
+    #ConfigureDialog QLabel:disabled { color: @secondary; }
+    #ConfigureDialog QLabel#SettingsTitle { font-size: 24px; }
+    #ConfigureDialog QLabel#SettingsNotice { color: @secondary; }
+    #ConfigureDialog QFrame#SettingsRule { background: @muted; border: none; min-height: 1px;
+        max-height: 1px; }
+    #ConfigureDialog QListWidget#selectorList { background: transparent; border: none;
+        border-right: 1px solid @muted; border-radius: 0; outline: 0; font-size: 17px;
+        padding-top: 6px; }
+    #ConfigureDialog QListWidget#selectorList::item { padding: 11px 12px; color: @text;
+        border-left: 4px solid transparent; }
+    #ConfigureDialog QListWidget#selectorList::item:hover:!selected { background: @hover; }
+    #ConfigureDialog QListWidget#selectorList::item:selected { color: @accent; background: @selrow;
+        border-left: 4px solid @accent; }
+    #ConfigureDialog QTabWidget > QWidget, #ConfigureDialog QStackedWidget,
+    #ConfigureDialog QScrollArea, #ConfigureDialog QScrollArea > QWidget > QWidget {
+        background: @bg; border: none; }
+    #ConfigureDialog QToolButton { background: @field; color: @text; border: 1px solid @border;
+        border-radius: 6px; padding: 5px 14px; }
+    #ConfigureDialog QToolButton:hover { border-color: @accent; }
+    #ConfigureDialog QToolButton:focus { border: 2px solid @accent; }
+    #ConfigureDialog QDialogButtonBox QPushButton { background: transparent; border: none;
+        border-radius: 6px; font-size: 16px; padding: 4px 10px; }
+    #ConfigureDialog QDialogButtonBox QPushButton:hover { background: @hover; }
+    #ConfigureDialog QDialogButtonBox QPushButton:focus { border: 2px solid @accent; }
+)";
+
+// The menu bar and status bar, set on those widgets alone; everything else takes its colours from
+// the palette. An application-wide style sheet would put every widget on Qt's slower style sheet
+// path, which made windows several times slower to build.
+constexpr const char* ChromeRules = R"(
+    QMenuBar { background: @bg; color: @text; border-bottom: 1px solid @muted; }
+    QMenuBar::item { background: transparent; padding: 4px 10px; border-radius: 4px; }
+    QMenuBar::item:selected { background: @hover; }
+    QMenu { background: @field; color: @text; border: 1px solid @border; padding: 4px; }
+    QMenu::item { padding: 5px 28px 5px 24px; border-radius: 4px; }
+    QMenu::item:selected { background: @accent; color: #ffffff; }
+    QMenu::item:disabled { color: @secondary; }
+    QMenu::separator { height: 1px; background: @border; margin: 4px 8px; }
+    QStatusBar { background: @bg; color: @secondary; border-top: 1px solid @muted; }
+    QStatusBar::item { border: none; }
+    QStatusBar QLabel { color: @secondary; }
+    QStatusBar QPushButton, QStatusBar QToolButton { background: transparent; border: none;
+        border-radius: 4px; padding: 0 6px; color: @text; }
+    QStatusBar QPushButton:hover, QStatusBar QToolButton:hover { background: @hover; }
+    QStatusBar QPushButton:checked { color: @accent; }
+)";
+
+QString Fill(QString sheet, const HomeTheme& theme, const QString& scope) {
+    const DerivedColors derived = Derive(theme);
+    sheet.replace(QStringLiteral("@arrowdown"), ArrowImage(theme.text, false));
+    sheet.replace(QStringLiteral("@arrowup"), ArrowImage(theme.text, true));
+    // Longer tokens first: "@secondary" and "@selrow" both start like the scope marker "@s".
+    const std::pair<const char*, QColor> tokens[] = {
+        {"@secondary", derived.secondary}, {"@selrow", derived.selected_row},
+        {"@accent", theme.accent},         {"@border", derived.border},
+        {"@field", derived.field},         {"@hover", derived.hover},
+        {"@muted", theme.muted},           {"@text", theme.text},
+        {"@bg", theme.background},
+    };
     for (const auto& [token, color] : tokens) {
         sheet.replace(QLatin1String(token), color.name());
     }
+    sheet.replace(QStringLiteral("@s"), scope);
     return sheet;
+}
+} // namespace
+
+QString HomeTheme::SettingsStyleSheet() const {
+    return Fill(QString::fromLatin1(SettingsRules) + QString::fromLatin1(ControlRules), *this,
+                QStringLiteral("#ConfigureDialog "));
+}
+
+QString HomeTheme::ChromeStyleSheet() const {
+    return Fill(QString::fromLatin1(ChromeRules), *this, {});
+}
+
+QPalette HomeTheme::ApplicationPalette() const {
+    const DerivedColors derived = Derive(*this);
+    QPalette palette;
+    palette.setColor(QPalette::Window, background);
+    palette.setColor(QPalette::WindowText, text);
+    palette.setColor(QPalette::Base, derived.field);
+    palette.setColor(QPalette::AlternateBase, derived.hover);
+    palette.setColor(QPalette::Text, text);
+    palette.setColor(QPalette::Button, derived.field);
+    palette.setColor(QPalette::ButtonText, text);
+    palette.setColor(QPalette::BrightText, Qt::white);
+    palette.setColor(QPalette::Highlight, accent);
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    palette.setColor(QPalette::ToolTipBase, derived.field);
+    palette.setColor(QPalette::ToolTipText, text);
+    palette.setColor(QPalette::PlaceholderText, derived.secondary);
+    palette.setColor(QPalette::Link, accent);
+    palette.setColor(QPalette::LinkVisited, focus_dark);
+    palette.setColor(QPalette::Light, MixColors(derived.field, Qt::white, 0.2));
+    palette.setColor(QPalette::Midlight, MixColors(derived.field, derived.border, 0.5));
+    palette.setColor(QPalette::Mid, derived.border);
+    palette.setColor(QPalette::Dark, MixColors(derived.border, Qt::black, 0.3));
+    palette.setColor(QPalette::Shadow, Qt::black);
+    for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText}) {
+        palette.setColor(QPalette::Disabled, role, derived.secondary);
+    }
+    return palette;
+}
+
+bool HomeTheme::SystemPrefersDark() {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    return QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+#else
+    return false;
+#endif
 }
 
 QColor MixColors(const QColor& from, const QColor& to, qreal amount) {

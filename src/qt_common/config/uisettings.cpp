@@ -4,6 +4,8 @@
 // SPDX-FileCopyrightText: 2016 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <QGuiApplication>
+#include <QStyleHints>
 #include <QSettings>
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
@@ -76,9 +78,26 @@ const Themes themes{{
 }};
 
 bool IsDarkTheme() {
-    const auto& theme = UISettings::values.theme;
-    return theme == std::string("qdarkstyle") || theme == std::string("qdarkstyle_midnight_blue") ||
-           theme == std::string("colorful_dark") || theme == std::string("colorful_midnight_blue");
+    const auto& appearance = UISettings::values.home_theme.GetValue();
+    if (appearance == "basic_black") {
+        return true;
+    }
+    if (appearance == "basic_white") {
+        return false;
+    }
+    if (appearance != "classic") {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+        return QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+#else
+        return false;
+#endif
+    }
+    // An empty classic theme means the platform default, which is dark on Windows.
+    const std::string theme = UISettings::values.theme.empty()
+                                  ? std::string(themes[size_t(default_theme)].second)
+                                  : UISettings::values.theme;
+    return theme == "qdarkstyle" || theme == "qdarkstyle_midnight_blue" ||
+           theme == "colorful_dark" || theme == "colorful_midnight_blue";
 }
 
 Values values = {};

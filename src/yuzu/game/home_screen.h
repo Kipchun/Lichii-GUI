@@ -42,8 +42,9 @@ public:
     /// The first avatar belongs to the active profile.
     void SetProfiles(const QList<QPixmap>& avatars);
     void SetConnectedPlayers(int count);
-    /// Accepts "basic_black" or "basic_white"; anything else follows the application palette.
-    void SetTheme(const QString& theme_id);
+    /// choice is the appearance setting, shown checked in the context menu; dark is what it
+    /// resolved to.
+    void SetTheme(const QString& choice, bool dark);
     /// An empty or unreadable path uses the theme's plain background.
     void SetWallpaper(const QString& path);
     void AddAppearanceActions(QMenu& menu);
@@ -107,6 +108,7 @@ private:
 
     Page page = Page::Home;
     QString theme_id;
+    bool dark_mode = true;
     HomeTheme theme;
     QPixmap background;
     QString selected_title;
