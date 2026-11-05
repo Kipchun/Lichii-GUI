@@ -66,6 +66,8 @@ add_executable(yuzu
     configuration/configure_debug_tab.ui
     configuration/configure_dialog.cpp
     configuration/configure_dialog.h
+    configuration/settings_navigation.cpp
+    configuration/settings_navigation.h
     configuration/configure_filesystem.cpp
     configuration/configure_filesystem.h
     configuration/configure_filesystem.ui
@@ -156,6 +158,8 @@ add_executable(yuzu
     debugger/controller.h
 
     game/game_list.cpp game/game_list.h
+    game/home_screen.cpp game/home_screen.h
+    game/home_theme.cpp game/home_theme.h
     game/game_grid.cpp game/game_grid.h
 
     game/game_tree.h game/game_tree.cpp

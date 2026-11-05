@@ -10,6 +10,7 @@
 
 #include <boost/algorithm/string/split.hpp>
 #include "common/fs/path_util.h"
+#include "core/constants.h"
 #include "common/game_presets.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
@@ -472,6 +473,7 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     game_list->PopulateAsync(UISettings::values.game_dirs);
 
     // Set up game list mode checkboxes.
+    SetupHomeScreen();
     SetGameListMode(UISettings::values.game_list_mode.GetValue());
 
     // make sure menubar has the arrow cursor instead of inheriting from this
@@ -1904,6 +1906,10 @@ bool MainWindow::SelectAndSetCurrentUser(
 
 void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletParameters params,
                           StartGameType type) {
+    // A game must never start underneath the settings page; leaving it keeps the changes.
+    if (settings_page && !settings_page->isWindow()) {
+        settings_page->accept();
+    }
     if (nup_running && filename.toStdString() == nup_source_path) {
         QMessageBox::information(this, tr("Conversion in Progress"),
                                  tr("This game cannot be started while its dump is being "
@@ -2395,6 +2401,8 @@ void MainWindow::UpdateRecentFiles() {
 
     // Enable the recent files menu if the list isn't empty
     ui->menu_recent_files->setEnabled(num_recent_files != 0);
+
+    game_list->OnRecentGamesChanged();
 }
 
 void MainWindow::OnGameListLoadFile(QString game_path, u64 program_id) {
@@ -2837,6 +2845,7 @@ void MainWindow::OnGameListShowList(bool show) {
         return;
     game_list->setVisible(show);
     game_list_placeholder->setVisible(!show);
+    UpdateHomeScreenStatus();
 };
 
 void MainWindow::OnGameListOpenPerGameProperties(const std::string& file) {
@@ -3516,6 +3525,94 @@ void MainWindow::SetGameListMode(Settings::GameListMode mode) {
 
     CheckIconSize();
     game_list->ResetViewMode();
+
+    const auto page = [mode] {
+        switch (mode) {
+        case Settings::GameListMode::GridView:
+            return HomeScreen::Page::Games;
+        case Settings::GameListMode::TreeView:
+            return HomeScreen::Page::Software;
+        default:
+            return HomeScreen::Page::Home;
+        }
+    }();
+    game_list->SetPage(page);
+    game_list_placeholder->SetPage(page);
+}
+
+void MainWindow::SetupHomeScreen() {
+    const HomeScreen::Actions actions{
+        .handbook = ui->action_Open_UserHandbook,
+        .install = ui->action_Install_File_NAND,
+        .album = ui->action_Launch_PhotoViewer,
+        .settings = ui->action_Configure,
+        .exit = ui->action_Exit,
+    };
+    const QString theme = QString::fromStdString(UISettings::values.home_theme.GetValue());
+    const QString wallpaper = QString::fromStdString(UISettings::values.home_wallpaper.GetValue());
+    for (HomeScreen* screen : std::array<HomeScreen*, 2>{game_list, game_list_placeholder}) {
+        screen->BindActions(actions);
+        screen->SetTheme(theme);
+        screen->SetWallpaper(wallpaper);
+        connect(screen, &HomeScreen::ThemeSelected, this, &MainWindow::SetHomeTheme);
+        connect(screen, &HomeScreen::ControllersRequested, this, &MainWindow::OnConfigureControls);
+        connect(screen, &HomeScreen::ProfilesRequested, this, &MainWindow::OnConfigureProfiles);
+        connect(screen, &HomeScreen::WallpaperSelected, this, &MainWindow::SetHomeWallpaper);
+    }
+    UpdateHomeScreenStatus();
+}
+
+void MainWindow::UpdateHomeScreenStatus() {
+    const auto load_avatar = [](const Common::UUID& uuid) {
+        const auto path =
+            Common::FS::GetEdenPath(Common::FS::EdenPath::NANDDir) /
+            fmt::format("system/save/8000000000000010/su/avators/{}.jpg", uuid.FormattedString());
+        QPixmap avatar{QString::fromStdString(Common::FS::PathToUTF8String(path))};
+        if (avatar.isNull()) {
+            avatar.loadFromData(Core::Constants::ACCOUNT_BACKUP_JPEG.data(),
+                                static_cast<u32>(Core::Constants::ACCOUNT_BACKUP_JPEG.size()));
+        }
+        return avatar;
+    };
+
+    const auto& profiles = QtCommon::system->GetProfileManager();
+    QList<QPixmap> avatars;
+    const auto current =
+        profiles.GetUser(static_cast<std::size_t>(Settings::values.current_user.GetValue()));
+    if (current) {
+        avatars.append(load_avatar(*current));
+    }
+    for (const auto& uuid : profiles.GetAllUsers()) {
+        if (uuid.IsValid() && uuid != current) {
+            avatars.append(load_avatar(uuid));
+        }
+    }
+
+    int connected = 0;
+    auto& hid = QtCommon::system->HIDCore();
+    for (const auto id : {Core::HID::NpadIdType::Player1, Core::HID::NpadIdType::Player2,
+                          Core::HID::NpadIdType::Player3, Core::HID::NpadIdType::Player4}) {
+        connected += hid.GetEmulatedController(id)->IsConnected(true) ? 1 : 0;
+    }
+
+    for (HomeScreen* screen : std::array<HomeScreen*, 2>{game_list, game_list_placeholder}) {
+        screen->SetProfiles(avatars);
+        screen->SetConnectedPlayers(connected);
+    }
+}
+
+void MainWindow::SetHomeTheme(const QString& theme_id) {
+    UISettings::values.home_theme.SetValue(theme_id.toStdString());
+    game_list->SetTheme(theme_id);
+    game_list_placeholder->SetTheme(theme_id);
+    OnSaveConfig();
+}
+
+void MainWindow::SetHomeWallpaper(const QString& path) {
+    UISettings::values.home_wallpaper.SetValue(path.toStdString());
+    game_list->SetWallpaper(path);
+    game_list_placeholder->SetWallpaper(path);
+    OnSaveConfig();
 }
 
 void MainWindow::SetGridView() {
@@ -3570,6 +3667,23 @@ void MainWindow::ToggleShowGameName() {
 }
 
 void MainWindow::OnConfigure() {
+    RunConfigureDialog(ConfigurePage::Default);
+}
+
+void MainWindow::OnConfigureControls() {
+    RunConfigureDialog(ConfigurePage::Controls);
+}
+
+void MainWindow::OnConfigureProfiles() {
+    RunConfigureDialog(ConfigurePage::Profiles);
+}
+
+void MainWindow::RunConfigureDialog(ConfigurePage page) {
+    if (settings_page) {
+        settings_page->FocusCategories();
+        return;
+    }
+
     const auto old_theme = UISettings::values.theme;
     const bool old_discord_presence = UISettings::values.enable_discord_presence.GetValue();
     const auto old_language_index = Settings::values.language_index.GetValue();
@@ -3579,114 +3693,140 @@ void MainWindow::OnConfigure() {
 #endif
 
     Settings::SetConfiguringGlobal(true);
-    ConfigureDialog configure_dialog(this, hotkey_registry, input_subsystem.get(),
-                                     vk_device_records, *QtCommon::system,
-                                     !multiplayer_state->IsHostingPublicRoom());
-    connect(&configure_dialog, &ConfigureDialog::LanguageChanged, this,
+    auto* configure_dialog =
+        new ConfigureDialog(this, hotkey_registry, input_subsystem.get(), vk_device_records,
+                            *QtCommon::system, !multiplayer_state->IsHostingPublicRoom());
+    settings_page = configure_dialog;
+    connect(configure_dialog, &ConfigureDialog::LanguageChanged, this,
             &MainWindow::OnLanguageChanged);
-    connect(&configure_dialog, &ConfigureDialog::ExternalContentDirsChanged, this,
+    connect(configure_dialog, &ConfigureDialog::ExternalContentDirsChanged, this,
             &MainWindow::OnGameListRefresh);
 
-    const auto result = configure_dialog.exec();
-    if (result != QDialog::Accepted && !UISettings::values.configuration_applied &&
-        !UISettings::values.reset_to_defaults) {
-        // Runs if the user hit Cancel or closed the window, and did not ever press the Apply button
-        // or `Reset to Defaults` button
-        return;
-    } else if (result == QDialog::Accepted) {
-        // Only apply new changes if user hit Okay
-        // This is here to avoid applying changes if the user hit Apply, made some changes, then hit
-        // Cancel
-        configure_dialog.ApplyConfiguration();
-    } else if (UISettings::values.reset_to_defaults) {
-        LOG_INFO(Frontend, "Resetting all settings to defaults");
-        if (!Common::FS::RemoveFile(config->GetConfigFilePath())) {
-            LOG_WARNING(Frontend, "Failed to remove configuration file");
+    configure_dialog->ApplyHomeTheme(game_list->Theme());
+    if (page == ConfigurePage::Controls) {
+        configure_dialog->ShowControls();
+    } else if (page == ConfigurePage::Profiles) {
+        configure_dialog->ShowProfiles();
+    }
+
+    // Without a running game the settings replace the home screen in the main window;
+    // otherwise they stay a separate window so they never cover the game.
+    const bool embed = !emulation_running;
+    connect(configure_dialog, &QDialog::finished, this,
+            [=, this](int result) {
+        configure_dialog->deleteLater();
+        if (embed) {
+            game_list->SetFilterFocus();
         }
-        if (!Common::FS::RemoveDirContentsRecursively(
-                Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "custom")) {
-            LOG_WARNING(Frontend, "Failed to remove custom configuration files");
+        if (result != QDialog::Accepted && !UISettings::values.configuration_applied &&
+            !UISettings::values.reset_to_defaults) {
+            // Runs if the user hit Cancel or closed the window, and did not ever press the Apply button
+            // or `Reset to Defaults` button
+            return;
+        } else if (result == QDialog::Accepted) {
+            // Only apply new changes if user hit Okay
+            // This is here to avoid applying changes if the user hit Apply, made some changes, then hit
+            // Cancel
+            configure_dialog->ApplyConfiguration();
+        } else if (UISettings::values.reset_to_defaults) {
+            LOG_INFO(Frontend, "Resetting all settings to defaults");
+            if (!Common::FS::RemoveFile(config->GetConfigFilePath())) {
+                LOG_WARNING(Frontend, "Failed to remove configuration file");
+            }
+            if (!Common::FS::RemoveDirContentsRecursively(
+                    Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "custom")) {
+                LOG_WARNING(Frontend, "Failed to remove custom configuration files");
+            }
+            if (!Common::FS::RemoveDirRecursively(
+                    Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir) / "game_list")) {
+                LOG_WARNING(Frontend, "Failed to remove game metadata cache files");
+            }
+
+            // Explicitly save the game directories, since reinitializing config does not explicitly do
+            // so.
+            QVector<UISettings::GameDir> old_game_dirs = std::move(UISettings::values.game_dirs);
+            QVector<u64> old_favorited_ids = std::move(UISettings::values.favorited_ids);
+
+            Settings::values.disabled_addons.clear();
+
+            config = std::make_unique<QtConfig>();
+            UISettings::values.reset_to_defaults = false;
+
+            UISettings::values.game_dirs = std::move(old_game_dirs);
+            UISettings::values.favorited_ids = std::move(old_favorited_ids);
+
+            InitializeRecentFileMenuActions();
+
+            SetDefaultUIGeometry();
+            RestoreUIState();
         }
-        if (!Common::FS::RemoveDirRecursively(
-                Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir) / "game_list")) {
-            LOG_WARNING(Frontend, "Failed to remove game metadata cache files");
+        InitializeHotkeys();
+
+        if (UISettings::values.theme != old_theme) {
+            UpdateUITheme();
+        }
+        if (UISettings::values.enable_discord_presence.GetValue() != old_discord_presence) {
+            SetDiscordEnabled(UISettings::values.enable_discord_presence.GetValue());
+        }
+        if (UISettings::values.enable_gamemode.GetValue() != old_gamemode) {
+            SetGamemodeEnabled(UISettings::values.enable_gamemode.GetValue());
+        }
+    #ifdef __unix__
+        if (UISettings::values.gui_force_x11.GetValue() != old_force_x11) {
+            GraphicsBackend::SetForceX11(UISettings::values.gui_force_x11.GetValue());
+        }
+    #endif
+
+        if (!multiplayer_state->IsHostingPublicRoom()) {
+            multiplayer_state->UpdateCredentials();
         }
 
-        // Explicitly save the game directories, since reinitializing config does not explicitly do
-        // so.
-        QVector<UISettings::GameDir> old_game_dirs = std::move(UISettings::values.game_dirs);
-        QVector<u64> old_favorited_ids = std::move(UISettings::values.favorited_ids);
+        emit UpdateThemedIcons();
 
-        Settings::values.disabled_addons.clear();
+        const auto reload = UISettings::values.is_game_list_reload_pending.exchange(false);
+        if (reload || Settings::values.language_index.GetValue() != old_language_index) {
+            game_list->PopulateAsync(UISettings::values.game_dirs);
+        }
 
-        config = std::make_unique<QtConfig>();
-        UISettings::values.reset_to_defaults = false;
+        UISettings::values.configuration_applied = false;
 
-        UISettings::values.game_dirs = std::move(old_game_dirs);
-        UISettings::values.favorited_ids = std::move(old_favorited_ids);
+        config->SaveAllValues();
 
-        InitializeRecentFileMenuActions();
+        if ((UISettings::values.hide_mouse || Settings::values.mouse_panning) && emulation_running) {
+            render_window->installEventFilter(render_window);
+            render_window->setAttribute(Qt::WA_Hover, true);
+        } else {
+            render_window->removeEventFilter(render_window);
+            render_window->setAttribute(Qt::WA_Hover, false);
+        }
 
-        SetDefaultUIGeometry();
-        RestoreUIState();
-    }
-    InitializeHotkeys();
+        if (UISettings::values.hide_mouse) {
+            mouse_hide_timer.start();
+        }
 
-    if (UISettings::values.theme != old_theme) {
-        UpdateUITheme();
-    }
-    if (UISettings::values.enable_discord_presence.GetValue() != old_discord_presence) {
-        SetDiscordEnabled(UISettings::values.enable_discord_presence.GetValue());
-    }
-    if (UISettings::values.enable_gamemode.GetValue() != old_gamemode) {
-        SetGamemodeEnabled(UISettings::values.enable_gamemode.GetValue());
-    }
-#ifdef __unix__
-    if (UISettings::values.gui_force_x11.GetValue() != old_force_x11) {
-        GraphicsBackend::SetForceX11(UISettings::values.gui_force_x11.GetValue());
-    }
-#endif
+        // Restart camera config
+        if (emulation_running) {
+            render_window->FinalizeCamera();
+            render_window->InitializeCamera();
+        }
 
-    if (!multiplayer_state->IsHostingPublicRoom()) {
-        multiplayer_state->UpdateCredentials();
-    }
+        if (!UISettings::values.has_broken_vulkan) {
+            renderer_status_button->setEnabled(!emulation_running);
+        }
 
-    emit UpdateThemedIcons();
+        UpdateStatusButtons();
+        controller_dialog->refreshConfiguration();
+        QtCommon::system->ApplySettings();
+        UpdateHomeScreenStatus();
+    });
 
-    const auto reload = UISettings::values.is_game_list_reload_pending.exchange(false);
-    if (reload || Settings::values.language_index.GetValue() != old_language_index) {
-        game_list->PopulateAsync(UISettings::values.game_dirs);
-    }
-
-    UISettings::values.configuration_applied = false;
-
-    config->SaveAllValues();
-
-    if ((UISettings::values.hide_mouse || Settings::values.mouse_panning) && emulation_running) {
-        render_window->installEventFilter(render_window);
-        render_window->setAttribute(Qt::WA_Hover, true);
+    if (embed) {
+        configure_dialog->EmbedIn(centralWidget());
+        configure_dialog->show();
+        configure_dialog->FocusCategories();
     } else {
-        render_window->removeEventFilter(render_window);
-        render_window->setAttribute(Qt::WA_Hover, false);
+        configure_dialog->exec();
     }
-
-    if (UISettings::values.hide_mouse) {
-        mouse_hide_timer.start();
-    }
-
-    // Restart camera config
-    if (emulation_running) {
-        render_window->FinalizeCamera();
-        render_window->InitializeCamera();
-    }
-
-    if (!UISettings::values.has_broken_vulkan) {
-        renderer_status_button->setEnabled(!emulation_running);
-    }
-
-    UpdateStatusButtons();
-    controller_dialog->refreshConfiguration();
-    QtCommon::system->ApplySettings();
 }
 
 void MainWindow::OnConfigureTas() {

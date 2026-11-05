@@ -80,6 +80,7 @@ public:
     static constexpr int FullPathRole = SortRole + 2;
     static constexpr int ProgramIdRole = SortRole + 3;
     static constexpr int FileTypeRole = SortRole + 4;
+    static constexpr int ArtworkRole = SortRole + 5;
 
     GameListItemPath() = default;
     GameListItemPath(const QString& game_path, const std::vector<u8>& picture_data,
@@ -117,6 +118,14 @@ public:
         QPixmap picture;
         if (!picture.loadFromData(picture_data.data(), static_cast<u32>(picture_data.size()))) {
             picture = GetDefaultIcon(size);
+        } else {
+            // The carousel draws far larger than the list icon size.
+            constexpr int max_artwork_size = 512;
+            setData(picture.width() > max_artwork_size || picture.height() > max_artwork_size
+                        ? picture.scaled(max_artwork_size, max_artwork_size, Qt::KeepAspectRatio,
+                                         Qt::SmoothTransformation)
+                        : picture,
+                    ArtworkRole);
         }
         picture = picture.scaled(size, size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 
@@ -164,8 +173,17 @@ public:
 
                 return QStringLiteral("%1\n    %2").arg(row1, row2);
             }
-            case Settings::GameListMode::GridView:
             case Settings::GameListMode::CarouselView:
+                if (role == SortRole) {
+                    // Recently played games lead the home row; the rest follow by name.
+                    const auto recent =
+                        UISettings::values.recent_files.indexOf(data(FullPathRole).toString());
+                    return QStringLiteral("%1 %2").arg(
+                        QStringLiteral("%1").arg(recent < 0 ? 9999 : recent, 4, 10, QLatin1Char('0')),
+                        row1.toLower());
+                }
+                return row1;
+            case Settings::GameListMode::GridView:
                 return row1;
             default:
                 break;

@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <QElapsedTimer>
 #include <QMainWindow>
+#include <QPointer>
 #include <QMessageBox>
 #include <QFutureWatcher>
 #include <QPushButton>
@@ -66,6 +67,7 @@ class ConfigurePostProcessing;
 enum class GameListOpenTarget;
 enum class DumpRomFSTarget;
 class GameListPlaceholder;
+class ConfigureDialog;
 
 class QtAmiiboSettingsDialog;
 class QtControllerSelectorDialog;
@@ -374,6 +376,8 @@ private slots:
     void OnMenuInstallToNAND();
     void OnMenuRecentFile();
     void OnConfigure();
+    void OnConfigureControls();
+    void OnConfigureProfiles();
     void OnConfigureTas();
     void OnDecreaseVolume();
     void OnIncreaseVolume();
@@ -447,6 +451,14 @@ private slots:
 #endif
 
 private:
+    enum class ConfigurePage { Default, Controls, Profiles };
+    void RunConfigureDialog(ConfigurePage page);
+
+    void SetupHomeScreen();
+    void UpdateHomeScreenStatus();
+    void SetHomeTheme(const QString& theme_id);
+    void SetHomeWallpaper(const QString& path);
+
     void RemovePlayTimeData(u64 program_id);
     bool SelectRomFSDumpTarget(const FileSys::ContentProvider&, u64 program_id,
                                u64* selected_title_id, u8* selected_content_record_type);
@@ -520,6 +532,7 @@ private:
 #endif
 
     GameListPlaceholder* game_list_placeholder = nullptr;
+    QPointer<ConfigureDialog> settings_page;
 
     std::vector<VkDeviceInfo::Record> vk_device_records;
 

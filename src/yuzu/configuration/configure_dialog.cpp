@@ -17,6 +17,7 @@
 #include "yuzu/configuration/configure_cpu.h"
 #include "yuzu/configuration/configure_debug_tab.h"
 #include "yuzu/configuration/configure_dialog.h"
+#include "yuzu/game/home_theme.h"
 #include "yuzu/configuration/configure_filesystem.h"
 #include "yuzu/configuration/configure_general.h"
 #include "yuzu/configuration/configure_graphics.h"
@@ -30,6 +31,7 @@
 #include "yuzu/configuration/configure_system.h"
 #include "yuzu/configuration/configure_ui.h"
 #include "yuzu/configuration/configure_web.h"
+#include "yuzu/configuration/settings_navigation.h"
 #include "yuzu/hotkeys.h"
 
 ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
@@ -120,6 +122,79 @@ ConfigureDialog::ConfigureDialog(QWidget* parent, HotkeyRegistry& registry_,
 ConfigureDialog::~ConfigureDialog() = default;
 
 void ConfigureDialog::SetConfiguration() {}
+
+void ConfigureDialog::ShowControls() {
+    // Row order comes from PopulateSelectionList.
+    ui->selectorList->setCurrentRow(5);
+}
+
+void ConfigureDialog::ShowProfiles() {
+    ui->selectorList->setCurrentRow(1);
+    ui->tabWidget->setCurrentWidget(profile_tab.get());
+}
+
+void ConfigureDialog::ApplyHomeTheme(const HomeTheme& theme) {
+    setStyleSheet(theme.SettingsStyleSheet());
+    ui->label->setObjectName(QStringLiteral("SettingsNotice"));
+
+    const auto make_rule = [this] {
+        auto* rule = new QFrame(this);
+        rule->setObjectName(QStringLiteral("SettingsRule"));
+        rule->setFrameShape(QFrame::NoFrame);
+        return rule;
+    };
+    if (!settings_title) {
+        auto* header = new QHBoxLayout;
+        header->setContentsMargins(6, 4, 6, 4);
+        header->setSpacing(12);
+        settings_icon = new QLabel(this);
+        header->addWidget(settings_icon);
+        settings_title = new QLabel(tr("System Settings"), this);
+        settings_title->setObjectName(QStringLiteral("SettingsTitle"));
+        header->addWidget(settings_title, 1);
+        ui->verticalLayout->insertLayout(0, header);
+        ui->verticalLayout->insertWidget(1, make_rule());
+        // Below the header, the rule and the category row.
+        ui->verticalLayout->insertWidget(3, make_rule());
+    }
+    settings_icon->setPixmap(DrawHomeSymbol(HomeSymbol::Settings, theme.text, 34));
+
+    const QColor glyph_mark = theme.background;
+    // As on the Switch, backing out keeps the changes; discarding is the explicit choice.
+    if (QPushButton* ok = ui->buttonBox->button(QDialogButtonBox::Ok)) {
+        ok->setText(tr("Back"));
+        ok->setIcon(HomeButtonGlyph(QStringLiteral("B"), theme.text, glyph_mark));
+        ok->setIconSize(QSize(24, 24));
+    }
+    if (QPushButton* cancel = ui->buttonBox->button(QDialogButtonBox::Cancel)) {
+        cancel->setText(tr("Discard Changes"));
+    }
+
+    if (!navigation) {
+        navigation = new SettingsNavigation(this, ui->selectorList, ui->tabWidget);
+    }
+}
+
+void ConfigureDialog::EmbedIn(QWidget* host) {
+    embed_host = host;
+    setParent(host, Qt::Widget);
+    setAttribute(Qt::WA_StyledBackground);
+    setAutoFillBackground(true);
+    setGeometry(host->rect());
+    host->installEventFilter(this);
+    raise();
+}
+
+void ConfigureDialog::FocusCategories() {
+    ui->selectorList->setFocus(Qt::OtherFocusReason);
+}
+
+bool ConfigureDialog::eventFilter(QObject* object, QEvent* event) {
+    if (object == embed_host && event->type() == QEvent::Resize) {
+        setGeometry(embed_host->rect());
+    }
+    return false;
+}
 
 void ConfigureDialog::ApplyConfiguration() {
     general_tab->ApplyConfiguration();

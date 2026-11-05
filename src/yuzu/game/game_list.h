@@ -22,6 +22,7 @@
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/model.h"
 #include "qt_common/util/game.h"
+#include "yuzu/game/home_screen.h"
 
 class QVariantAnimation;
 
@@ -59,7 +60,7 @@ enum class DumpRomFSTarget {
     SDMC,
 };
 
-class GameList : public QWidget {
+class GameList : public HomeScreen {
     Q_OBJECT
 
 public:
@@ -87,6 +88,9 @@ public:
     void UnloadController();
 
     void ResetViewMode();
+
+    /// Moves the most recently played game to the front of the home row.
+    void OnRecentGamesChanged();
 
 public slots:
     void SetNupConversionRunning(bool running);
@@ -129,6 +133,7 @@ private slots:
 
 private:
     void SetupViews();
+    void ApplySortOrder();
     void SetupScrollAnimation();
     bool eventFilter(QObject* obj, QEvent* event) override;
     void changeEvent(QEvent*) override;
@@ -171,10 +176,11 @@ private:
 
     bool m_isTreeMode = true;
     bool nup_conversion_running{};
+    bool filter_visible = true;
     QAbstractItemView* m_currentView = nullptr;
 };
 
-class GameListPlaceholder : public QWidget {
+class GameListPlaceholder : public HomeScreen {
     Q_OBJECT
 public:
     explicit GameListPlaceholder(MainWindow* parent = nullptr);

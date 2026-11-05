@@ -43,14 +43,11 @@
 GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvider* provider_,
                    PlayTime::PlayTimeManager& play_time_manager_, Core::System& system_,
                    MainWindow* parent)
-    : QWidget{parent}, vfs{std::move(vfs_)}, provider{provider_},
+    : HomeScreen{parent}, vfs{std::move(vfs_)}, provider{provider_},
       play_time_manager{play_time_manager_}, system{system_} {
 
     this->main_window = parent;
-    layout = new QVBoxLayout;
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    setLayout(layout);
+    layout = ContentLayout();
 
     item_model = new GameListModel(vfs, provider, play_time_manager, system, this);
 
@@ -72,6 +69,26 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
     connect(carousel_view, &QListView::activated, this, &GameList::ValidateEntry);
     connect(carousel_view, &QListView::customContextMenuRequested, this, &GameList::PopupContextMenu);
 
+    connect(this, &HomeScreen::ThemeChanged, carousel_view, [this](const HomeTheme& colors) {
+        carousel_view->SetColors(colors.button, colors.text, colors.focus_dark, colors.focus_light);
+    });
+    connect(carousel_view, &GameCarousel::TopEdgeReached, this, &HomeScreen::FocusProfiles);
+    connect(carousel_view, &GameCarousel::BottomEdgeReached, this, &HomeScreen::FocusShortcuts);
+    connect(carousel_view->selectionModel(), &QItemSelectionModel::currentChanged, this,
+            [this](const QModelIndex& current) {
+                SetSelectedTitle(
+                    current.data(Qt::DisplayRole).toString().section(QLatin1Char('\n'), 0, 0));
+            });
+
+    connect(this, &HomeScreen::OpenRequested, this,
+            [this] { ValidateEntry(m_currentView->currentIndex()); });
+    connect(this, &HomeScreen::OptionsRequested, this, [this] {
+        const QModelIndex current = m_currentView->currentIndex();
+        if (current.isValid()) {
+            PopupContextMenu(m_currentView->visualRect(current).center());
+        }
+    });
+
     connect(controller_navigation, &ControllerNavigation::TriggerKeyboardEvent, this,
             [this](Qt::Key key) {
                 if (system.IsPoweredOn()) {
@@ -81,7 +98,18 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
                     return;
                 }
                 QKeyEvent* event = new QKeyEvent(QEvent::KeyPress, key, Qt::NoModifier);
-                QCoreApplication::postEvent(m_currentView, event);
+                // Remapping a controller grabs the keyboard; navigating would fight it.
+                if (QWidget::keyboardGrabber()) {
+                    return;
+                }
+                // Follow focus onto the home buttons, the empty-library screen and the settings
+                // page, which all live outside the library view.
+                QWidget* target = m_currentView;
+                QWidget* focused = QApplication::focusWidget();
+                if (focused && (IsNavigationTarget(focused) || !isAncestorOf(focused))) {
+                    target = focused;
+                }
+                QCoreApplication::postEvent(target, event);
             });
 
     connect(item_model, &GameListModel::PopulatingCompleted, this,
@@ -127,13 +155,17 @@ void GameList::ClearFilter() {
 }
 
 void GameList::SetFilterFocus() {
-    if (item_model->rowCount() > 0) {
+    if (game_list_mode == Settings::GameListMode::CarouselView) {
+        carousel_view->setFocus();
+    } else if (item_model->rowCount() > 0) {
         search_field->setFocus();
     }
 }
 
 void GameList::SetFilterVisible(bool visibility) {
-    search_field->setVisible(visibility);
+    filter_visible = visibility;
+    search_field->setVisible(filter_visible &&
+                             game_list_mode != Settings::GameListMode::CarouselView);
 }
 
 bool GameList::IsEmpty() const {
@@ -181,8 +213,12 @@ void GameList::UnloadController() {
 }
 
 void GameList::ResetViewMode() {
+    // Each view keeps its own hidden rows, so a filter does not carry over to the next one.
+    search_field->clear();
+
     const auto mode = UISettings::values.game_list_mode.GetValue();
     game_list_mode = mode;
+    search_field->setVisible(filter_visible && mode != Settings::GameListMode::CarouselView);
 
     if (m_currentView)
         layout->removeWidget(m_currentView);
@@ -219,7 +255,7 @@ void GameList::ResetViewMode() {
 
     m_currentView->setVisible(true);
     m_currentView->setEnabled(true);
-    layout->insertWidget(0, m_currentView);
+    layout->insertWidget(0, m_currentView, 1);
 
     auto view = m_currentView->viewport();
     view->installEventFilter(this);
@@ -243,6 +279,30 @@ void GameList::ResetViewMode() {
         if (!UISettings::values.game_dirs.empty()) {
             item_model->PopulateAsync(UISettings::values.game_dirs);
         }
+    } else {
+        ApplySortOrder();
+    }
+
+    SetContentFocusWidget(m_currentView);
+    m_currentView->setFocus();
+    if (mode == Settings::GameListMode::CarouselView) {
+        carousel_view->SelectFirst();
+    }
+}
+
+void GameList::ApplySortOrder() {
+    if (game_list_mode == Settings::GameListMode::CarouselView) {
+        item_model->sort(0, Qt::AscendingOrder);
+    } else {
+        item_model->sort(tree_view->header()->sortIndicatorSection(),
+                         tree_view->header()->sortIndicatorOrder());
+    }
+}
+
+void GameList::OnRecentGamesChanged() {
+    if (game_list_mode == Settings::GameListMode::CarouselView) {
+        ApplySortOrder();
+        carousel_view->SelectFirst();
     }
 }
 
@@ -251,6 +311,8 @@ void GameList::OnTextChanged(const QString& new_text) {
 
     if (m_isTreeMode) {
         tree_view->ApplyFilter(edit_filter_text, item_model);
+    } else if (game_list_mode == Settings::GameListMode::CarouselView) {
+        carousel_view->ApplyFilter(edit_filter_text, item_model);
     } else {
         grid_view->ApplyFilter(edit_filter_text, item_model);
     }
@@ -338,8 +400,12 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     }
 
     // TODO: carousel/grid impl.
-    item_model->sort(tree_view->header()->sortIndicatorSection(),
-                     tree_view->header()->sortIndicatorOrder());
+    ApplySortOrder();
+
+    if (game_list_mode == Settings::GameListMode::CarouselView) {
+        carousel_view->SelectFirstIfNone();
+        carousel_view->setFocus();
+    }
 
     emit PopulatingCompleted();
 }
@@ -406,8 +472,7 @@ void GameList::ToggleFavorite(u64 program_id) {
     if (UISettings::values.favorited_ids.contains(program_id)) {
         tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(),
                                 !search_field->filterText().isEmpty());
-        item_model->sort(tree_view->header()->sortIndicatorSection(),
-                         tree_view->header()->sortIndicatorOrder());
+        ApplySortOrder();
     } else {
         if (UISettings::values.favorited_ids.size() == 0) {
             tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(), true);
@@ -425,6 +490,8 @@ void GameList::PopupContextMenu(const QPoint& menu_location) {
         QAction* addGameDirAction = blank_menu.addAction(tr("&Add New Game Directory"));
 
         connect(addGameDirAction, &QAction::triggered, this, &GameList::AddDirectory);
+        blank_menu.addSeparator();
+        AddAppearanceActions(blank_menu);
         blank_menu.exec(m_currentView->viewport()->mapToGlobal(menu_location));
         return;
     }
@@ -693,7 +760,7 @@ void GameList::changeEvent(QEvent* event) {
         RetranslateUI();
     }
 
-    QWidget::changeEvent(event);
+    HomeScreen::changeEvent(event);
 }
 
 void GameList::RetranslateUI() {
@@ -716,6 +783,8 @@ void GameList::SetupScrollAnimation() {
 
     setup(vertical_scroll, grid_view->verticalScrollBar());
     setup(horizontal_scroll, grid_view->horizontalScrollBar());
+
+    setup(horizontal_scroll, carousel_view->horizontalScrollBar());
 }
 
 bool GameList::eventFilter(QObject* obj, QEvent* event) {
@@ -728,6 +797,12 @@ bool GameList::eventFilter(QObject* obj, QEvent* event) {
         int deltaY = wheelEvent->angleDelta().y();
 
         if (horizontal && deltaY != 0 && deltaX == 0) {
+            deltaX = deltaY;
+            deltaY = 0;
+        }
+
+        // The carousel only scrolls sideways, so a plain wheel moves it too.
+        if (game_list_mode == Settings::GameListMode::CarouselView && deltaX == 0) {
             deltaX = deltaY;
             deltaY = 0;
         }
@@ -767,7 +842,7 @@ bool GameList::eventFilter(QObject* obj, QEvent* event) {
         QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
 
         QModelIndex index = m_currentView->indexAt(mouseEvent->pos());
-        if (!index.isValid()) {
+        if (!index.isValid() && game_list_mode != Settings::GameListMode::CarouselView) {
             m_currentView->selectionModel()->clearSelection();
             m_currentView->setCurrentIndex(QModelIndex());
         }
@@ -780,29 +855,29 @@ bool GameList::eventFilter(QObject* obj, QEvent* event) {
 
     if (obj == carousel_view->viewport() && event->type() == QEvent::Resize) {
         carousel_view->UpdateIconSize();
-        return true;
+        // The view must still see this to keep its scroll range in step with the new width.
+        return false;
     }
 
     return QWidget::eventFilter(obj, event);
 }
 
-GameListPlaceholder::GameListPlaceholder(MainWindow* parent) : QWidget{parent} {
-    layout = new QVBoxLayout;
+GameListPlaceholder::GameListPlaceholder(MainWindow* parent) : HomeScreen{parent} {
+    layout = ContentLayout();
+    SetLibraryHintsVisible(false);
     image = new QLabel;
     text = new QLabel;
     layout->setAlignment(Qt::AlignCenter);
-    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(200));
+    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(72));
+    text->setObjectName(QStringLiteral("EmptyLibrary"));
+    text->setWordWrap(true);
 
     RetranslateUI();
-    QFont font = text->font();
-    font.setPointSize(20);
-    text->setFont(font);
     text->setAlignment(Qt::AlignHCenter);
     image->setAlignment(Qt::AlignHCenter);
 
     layout->addWidget(image);
     layout->addWidget(text);
-    setLayout(layout);
 }
 
 GameListPlaceholder::~GameListPlaceholder() = default;
@@ -816,7 +891,7 @@ void GameListPlaceholder::changeEvent(QEvent* event) {
         RetranslateUI();
     }
 
-    QWidget::changeEvent(event);
+    HomeScreen::changeEvent(event);
 }
 
 void GameListPlaceholder::RetranslateUI() {

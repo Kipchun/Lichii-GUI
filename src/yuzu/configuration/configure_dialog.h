@@ -36,6 +36,9 @@ class ConfigureUi;
 class ConfigureWeb;
 
 class HotkeyRegistry;
+class QLabel;
+class SettingsNavigation;
+struct HomeTheme;
 
 namespace InputCommon {
 class InputSubsystem;
@@ -56,6 +59,18 @@ public:
     ~ConfigureDialog() override;
 
     void ApplyConfiguration();
+
+    void ShowControls();
+    void ShowProfiles();
+    /// Gives the dialog the System Settings look of the home screen, with controller-style
+    /// navigation: categories on the left, rows on the right, B to step back out.
+    void ApplyHomeTheme(const HomeTheme& theme);
+    /// Shows the dialog as a page covering host instead of as its own window.
+    void EmbedIn(QWidget* host);
+    void FocusCategories();
+
+protected:
+    bool eventFilter(QObject* object, QEvent* event) override;
 
 private slots:
     void OnLanguageChanged(const QString& locale);
@@ -92,6 +107,10 @@ private:
     std::unique_ptr<ConfigureUi> ui_tab;
     std::unique_ptr<ConfigureGraphics> graphics_tab;
     std::unique_ptr<ConfigureHotkeys> hotkeys_tab;
+    QLabel* settings_icon = nullptr;
+    QLabel* settings_title = nullptr;
+    QWidget* embed_host = nullptr;
+    SettingsNavigation* navigation = nullptr;
     std::unique_ptr<ConfigureInput> input_tab;
     std::unique_ptr<ConfigureNetwork> network_tab;
     std::unique_ptr<ConfigureProfileManager> profile_tab;
